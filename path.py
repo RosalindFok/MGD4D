@@ -14,6 +14,15 @@ REST_meta_MDD_dir_path = depression_dir_path / "REST-meta-MDD"
 # Brainnetome_Atlas
 Brainnetome_Atlas_dir_path= Path("Brainnetome_Atlas")
 BN_Atlas_246_1mm_nii_path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_1mm.nii.gz"
+BN_Atlas_246_2mm_nii_path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_2mm.nii.gz"
+BN_Atlas_246_3mm_nii_path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_3mm.nii.gz"
+
+# run_files
+run_files_dir_path = Path("..") / "run_files"
+run_files_ds002748_dir_path = run_files_dir_path / "ds002748"
+run_files_ds003007_dir_path = run_files_dir_path / "ds003007"
+run_files_ds002748_dir_path.mkdir(parents=True, exist_ok=True)
+run_files_ds003007_dir_path.mkdir(parents=True, exist_ok=True)
 
 @dataclass(frozen=True)
 class Paths:
@@ -21,3 +30,7 @@ class Paths:
     ds003007_dir_path: Path = ds003007_dir_path
     REST_meta_MDD_dir_path: Path = REST_meta_MDD_dir_path
     BN_Atlas_246_1mm_nii_path: Path = BN_Atlas_246_1mm_nii_path
+    BN_Atlas_246_2mm_nii_path: Path = BN_Atlas_246_2mm_nii_path
+    BN_Atlas_246_3mm_nii_path: Path = BN_Atlas_246_3mm_nii_path
+    run_files_ds002748_dir_path: Path = run_files_ds002748_dir_path
+    run_files_ds003007_dir_path: Path = run_files_ds003007_dir_path

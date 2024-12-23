@@ -2,7 +2,13 @@
 Multi-modal Graph Diffusion for identifying neuroimaging biomarkers of mental disorder
 
 ## Windows11上配准
+``` shell
 pip install antspyx
+pip install nibabel
+pip install pandas
+pip install tqdm
+pip install matplotlib
+```
 
 通用预处理步骤
 1. 去除头骨
@@ -20,6 +26,7 @@ module load anaconda/2021.11 cuda/12.1 # N32EA14P
 module load anaconda/2022.10 cuda/12.1 # N40R4
 conda create --name BraVO python=3.11
 source activate BraVO
+```
 
 ``` shell
 chmod 777 *.sh
@@ -30,5 +37,4 @@ scancel job_id # cancel the job via its id
 
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 
 pip install nibabel -i https://pypi.tuna.tsinghua.edu.cn/simple/ 
-pip install SimpleITK -i https://pypi.tuna.tsinghua.edu.cn/simple/ 
 
