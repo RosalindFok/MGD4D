@@ -7,12 +7,12 @@ import warnings
 import numpy as np
 import pandas as pd 
 import nibabel as nib 
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from nilearn import maskers, connectome
 
 from path import Path, Paths
 from config import Gender, IS_MD
+from plot import plot_heap_map, draw_atlas
 
 
 def clear_temporary_files_of_ants(temp_dir_path : Path = Path("C:") / "Users" / "26036" / "AppData"/ "Local" / "Temp") -> None:
@@ -52,18 +52,7 @@ def adjust_dim_of_antsImage(image_5d_path : Path) -> None:
         nib.save(new_img, image_5d_path)
         end_time = time.time()
         print(f"It took {end_time - start_time:.2f} seconds to adjust dim of {image_5d_path.absolute()}")
-
-def plot_heap_map(matrix : np.array, saved_dir_path : Path, fig_name : str = "correlation_matrix.svg") -> None:
-    # plot heatmap
-    plt.figure(figsize=(10, 10))
-    plt.imshow(matrix, cmap="RdBu_r", interpolation="nearest")  
-    plt.colorbar()  
-    plt.title("Heatmap")  
-    plt.xlabel("X-axis")  
-    plt.ylabel("Y-axis")  
-    plt.savefig(saved_dir_path / fig_name, format="svg")  
-    plt.close()  
-
+ 
 def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path, 
                                             participants_info : pd.DataFrame | dict,
                                             anat3d_path : Path, func4d_path : Path, 
@@ -81,6 +70,11 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
             raise ValueError(f"participants_info must be pd.DataFrame or dict, but got {type(participants_info)}")
         with info_json_path.open('w') as f:
             json.dump(subject_info, f, indent=4)
+    
+    # Plot atlas
+    fig_path = Paths.Fig_Dir / (atlas_path.stem + ".png")
+    if not fig_path.exists():
+        draw_atlas(atlas = nib.load(atlas_path), saved_path=fig_path)
 
     # Step 1: Register
     # anat: anat -> atlas 
@@ -308,7 +302,7 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
     #   W – Spatial Normalization
     #   F – Filter (0.01~0.1Hz)
     for group_name in ["ROISignals_FunImgARCWF", "ROISignals_FunImgARglobalCWF"]:
-        for mat_path in tqdm(list((results_dir_path / group_name).iterdir()), desc=group_name, leave=True):
+        for mat_path in tqdm(list((results_dir_path / group_name).iterdir()), desc=f"Process on {group_name}", leave=True):
             assert mat_path.suffix == ".mat", f"{mat_path} is not a mat file"
             sub_id = mat_path.stem.split("_")[1]
             saved_dir_path = saved_root_dir_path / group_name / sub_id

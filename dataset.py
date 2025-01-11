@@ -1,6 +1,10 @@
 import json
 import torch
+import random
 import numpy as np
+import nibabel as nib
+from tqdm import tqdm
+from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
 from nilearn import datasets
 from sklearn.model_selection import KFold
@@ -8,6 +12,9 @@ from torch.utils.data import Dataset, DataLoader
 
 from path import Paths
 from config import IS_MD
+from plot import draw_atlas
+
+random.seed(66)
 
 class Dataset_Mild_Depression(Dataset):
     def __init__(self, md_path_list : list[Path], hc_path_list : list[Path]) -> None:
@@ -103,7 +110,7 @@ class KFold_Mild_Depression:
         if group is None:  
             raise ValueError(f"Unknown group: {group_name}")
 
-        kfold_dir_paths = {} # fold : {train_set, test_set}
+        kfold_dir_paths = {} # {fold : {train_set, test_set}}
         fold = 1
         for train_index, test_index in self.kf.split(group):
             train_set_dir_path_list = [group[i] for i in train_index]
@@ -121,53 +128,68 @@ class KFold_Mild_Depression:
 
 
 class Dataset_Major_Depression(Dataset):
-    def __init__(self, ) -> None:
+    def __init__(self, md_path_list : list[tuple[dict[str, Path], int]], hc_path_list : list[tuple[dict[str, Path], int]]) -> None:
         super().__init__()
+        self.path_list = md_path_list + hc_path_list
+        random.shuffle(self.path_list)
+    
+    def __getitem__(self, index) -> tuple:
+        path_dict, is_md = self.path_list[index]
+        sub_id = path_dict.pop("sub_id")
+        info_path = path_dict.pop("info")
+        with info_path.open("r") as f:
+            info = json.load(f)
 
-    def __getitem__(self, index) -> None:
-        pass
+        for atlas_name, matrix_path in path_dict.items():
+            matrix = np.load(matrix_path)
+            
 
     def __len__(self) -> None:
-        pass
+        return len(self.path_list)
 
 class KFold_Major_Depression:
-    def __init__(self) -> None:
+    def __init__(self, is_global_signal_regression : bool, rest_meta_mdd_dir_path : Path = Paths.Run_Files.run_files_rest_meta_mdd_dir_path,
+                 n_splits : int = 5, shuffle : bool = False) -> None:
+        self.rest_meta_mdd_dir_path = rest_meta_mdd_dir_path
+        self.dir_name = "ROISignals_FunImgARglobalCWF" if is_global_signal_regression else "ROISignals_FunImgARCWF"
+        
         self.atlas_labels_dict = self.__download_atlas__()
 
-        self.paths_dict = {} # {group_name : {major_depression, healthy_control}}
-        for group_name in ["ROISignals_FunImgARCWF", "ROISignals_FunImgARglobalCWF"]:
-            md_list, hc_list = [], [] # [{sub_id:sub_id, info:info_path, atalas_name:fc_matrix_path}]
-            for sub_dir_path in (Paths.Run_Files.run_files_rest_meta_mdd_dir_path / group_name).iterdir():
-                middle_label = int(sub_dir_path.name.split("-")[1]) # 1-MDD, 2-HCS
-                path_dict = {}
-                path_dict["sub_id"] = sub_dir_path.name
-                info_path = sub_dir_path / "info.json"
-                assert info_path.exists(), f"Info file not found in {sub_dir_path}"
-                path_dict["info"] = info_path
-                for fc_matrix_path in sub_dir_path.glob("*.npy"):
-                    assert fc_matrix_path.exists(), f"FC matrix file not found in {sub_dir_path}"
-                    atlas_name = fc_matrix_path.stem.split("_")[0]
-                    path_dict[atlas_name] = fc_matrix_path
-                if middle_label == 1:
-                    md_list.append(path_dict)
-                elif middle_label == 2:
-                    hc_list.append(path_dict)
-                else:
-                    raise ValueError(f"Unknown middle label: {middle_label}")
-            self.paths_dict[group_name] = {"major_depression" : md_list, "healthy_control" : hc_list}
+        md_list, hc_list = [], [] 
+        for sub_dir_path in tqdm(list((rest_meta_mdd_dir_path / self.dir_name).iterdir()), desc=f"Loading {self.dir_name}", leave=True):
+            middle_label = int(sub_dir_path.name.split("-")[1]) # 1-MDD, 2-HCS
+            path_dict = {} # {sub_id:info_path, atalas_name:fc_matrix_path, ...}
+            info_path = sub_dir_path / "info.json"
+            assert info_path.exists(), f"Info file not found in {sub_dir_path}"
+            path_dict["sub_id"] = sub_dir_path.name
+            path_dict["info"] = info_path
+            for fc_matrix_path in sub_dir_path.glob("*.npy"):
+                assert fc_matrix_path.exists(), f"FC matrix file not found in {sub_dir_path}"
+                atlas_name = fc_matrix_path.stem.split("_")[0]
+                path_dict[atlas_name] = fc_matrix_path
+            if middle_label == 1:
+                md_list.append((path_dict, IS_MD.IS))
+            elif middle_label == 2:
+                hc_list.append((path_dict, IS_MD.NO))
+            else:
+                raise ValueError(f"Unknown middle label: {middle_label}")
+        self.paths_dict = {"major_depression" : md_list, "healthy_controls" : hc_list}
 
-    def __download_atlas__(self) -> dict[any, list[str]]:
+        # K Fold
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle)
+
+    def __download_atlas__(self) -> dict[Any, list[str]]:
         """
         Download atlas from nilearn
         """
-        downloaded_atlas_dir_path = Paths.Run_Files.run_files_rest_meta_mdd_dir_path / "downloaded_atlas"
+        downloaded_atlas_dir_path = self.rest_meta_mdd_dir_path / "downloaded_atlas"
         method_pair = { # {name of atlas : {atlas, coresponding matrix}}
             # https://nilearn.github.io/stable/modules/description/aal.html
             "AAL" : datasets.fetch_atlas_aal(data_dir=downloaded_atlas_dir_path),
             # https://nilearn.github.io/stable/modules/description/harvard_oxford.html
-            "HOC" :  datasets.fetch_atlas_harvard_oxford("cort-prob-1mm", data_dir=downloaded_atlas_dir_path),
+            "HOC" :  datasets.fetch_atlas_harvard_oxford("cort-maxprob-thr50-1mm", data_dir=downloaded_atlas_dir_path),
             # https://nilearn.github.io/stable/modules/description/harvard_oxford.html
-            "HOS" :  datasets.fetch_atlas_harvard_oxford("sub-prob-1mm", data_dir=downloaded_atlas_dir_path),
+            "HOS" :  datasets.fetch_atlas_harvard_oxford("sub-maxprob-thr50-1mm", data_dir=downloaded_atlas_dir_path),
             # https://nilearn.github.io/stable/modules/description/craddock_2012.html
             # Note: There are no labels for the Craddock atlas, which have been generated from applying spatially constrained clustering on resting-state data.
             # "Craddock" : datasets.fetch_atlas_craddock_2012(data_dir=downloaded_atlas_dir_path),
@@ -176,14 +198,40 @@ class KFold_Major_Depression:
         for key, value in method_pair.items():
             # type of AAL atlas is str, path to nifti file containing the regions.
             # type of Harvard-Oxford atlas is nibabel image.
-            atlas_labels_dict[key] = {"atlas" : value.maps, "labels" : value.labels}
+            atlas, labels = value.maps,value.labels
+            atlas_labels_dict[key] = {"atlas" : atlas, "labels" : labels}
+            # plot atlas
+            fig_path = Paths.Fig_Dir / f"{key}.png"
+            if not fig_path.exists():
+                if type(atlas) == str: # aal
+                    draw_atlas(atlas=nib.load(atlas), saved_path=fig_path)
+                elif type(atlas) == nib.nifti1.Nifti1Image: # harvard-oxford
+                    draw_atlas(atlas=atlas, saved_path=fig_path)
+                else:
+                    raise TypeError(f"Unknown type of atlas: {type(atlas)}")
         return atlas_labels_dict
 
-
-    def __k_fold__(self, ) -> None:
-        pass
+    def __k_fold__(self) -> dict[int, dict[str, dict[str, list[tuple[dict[str, Path]], int]]]]:
+        kfold_dir_paths = {} # {{group_name : {fold : {train_set, test_set}}}, ...}
+        for group_name, path_list in self.paths_dict.items(): # group_name in ["major_depression", "healthy_controls"]
+            kfold_dir_paths[group_name] = {}
+            fold = 1
+            for train_index, test_index in self.kf.split(path_list):
+                train_set_dir_path = [path_list[i] for i in train_index]
+                test_set_dir_path = [path_list[i] for i in test_index]
+                kfold_dir_paths[group_name][fold] = {"train" : train_set_dir_path, "test" : test_set_dir_path}
+                fold += 1
+        return kfold_dir_paths
 
     def get_dataloader_via_fold(self, fold : int) -> DataLoader:
-        pass
+        kfold_dir_paths = self.__k_fold__()
+        md_group = kfold_dir_paths["major_depression"]
+        hc_group = kfold_dir_paths["healthy_controls"]
+        assert fold in md_group.keys(), f"Unknown fold: {fold}, available folds: {md_group.keys()}"
+        train_dataset = Dataset_Major_Depression(md_path_list=md_group[fold]["train"], hc_path_list=hc_group[fold]["train"])
+        test_dataset  = Dataset_Major_Depression(md_path_list=md_group[fold]["test"] , hc_path_list=hc_group[fold]["test"])
 
-KFold_Major_Depression()
+
+
+KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold(fold=1) 
+

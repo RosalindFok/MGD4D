@@ -53,3 +53,5 @@ class Paths:
     Functional_Connectomes_1000: Functional_Connectomes_1000_Path = Functional_Connectomes_1000_Path
     Brainnetome_Atlas: Brainnetome_Atlas_Path = Brainnetome_Atlas_Path
     Run_Files: Run_Files_Path = Run_Files_Path
+    Fig_Dir: Path = Path("figs")
+    Fig_Dir.mkdir(parents=True, exist_ok=True)
