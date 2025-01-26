@@ -270,7 +270,7 @@ def read_adjacent_matrix_of_brainnetome_atlas(file_path : Path = Paths.Brainneto
 
 def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_path,
                           saved_root_dir_path : Path  = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
-    # Read the information of participants
+    # Auxiliary information
     participants_info = {} # {sub_id : {key : value}}
     participants_info_xlsx_path = dir_path / "REST-meta-MDD-PhenotypicData_WithHAMDSubItem_V4.xlsx"
     assert participants_info_xlsx_path.exists(), f"{participants_info_xlsx_path} does not exist"
@@ -291,6 +291,9 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
             sex_map = {1 : Gender.MALE, 2 : Gender.FEMALE, 0 : Gender.UNSPECIFIED}
             information_dict.update({"Sex" : sex_map[information_dict["Sex"]]})
             participants_info[row["ID"]] = information_dict
+    info_json_path = saved_root_dir_path / "participants_info.json"
+    with info_json_path.open("w") as f:
+        json.dump(participants_info, f, indent=4)
 
     # Functional connectivity
     results_dir_path = dir_path / "REST-meta-MDD-Phase1-Sharing" / "Results"
@@ -334,11 +337,6 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                 }           
 
                 for atlas_name, time_series in time_series_pair.items():
-                    info_json_path = saved_dir_path / "info.json"
-                    if not info_json_path.exists():
-                        with info_json_path.open("w") as f:
-                            json.dump(participants_info[sub_id], f, indent=4)
-
                     # atlas = atlas_labels_dict[atlas_name]["atlas"]
                     # labels = atlas_labels_dict[atlas_name]["labels"]
                     fc_matrix_path = saved_dir_path / f"{atlas_name}_fc_matrix.npy"
@@ -347,6 +345,24 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                         np.fill_diagonal(matrix, 0) # set the diagonal to 0 (1 -> 0)
                         np.save(fc_matrix_path, matrix)
                         plot_heap_map(matrix=matrix, saved_dir_path=saved_dir_path, fig_name=f"{atlas_name}_fc_matrix.svg")
+
+    # VBM
+    vbm_dir_path = dir_path / "REST-meta-MDD-VBM-Phase1-Sharing" / "VBM"
+    # wc1: Gray matter density in MNI space
+    # wc2: White matter density in MNI space
+    # mwc1: Gray matter volume in MNI space
+    # mwc2: White matter volume in MNI space
+    for group_name in ["wc1", "wc2", "mwc1", "mwc2"]:
+        saved_dir_path = saved_root_dir_path / group_name
+        saved_dir_path.mkdir(parents=True, exist_ok=True)
+        for nii_path in tqdm(list((vbm_dir_path / group_name).iterdir()), desc=f"Process on {group_name}", leave=True):
+            if 'S4' in nii_path.name:
+                continue
+            denoised_path = saved_dir_path / nii_path.name
+            if not denoised_path.exists():
+                result = ants.denoise_image(image=ants.image_read(str(nii_path)))
+                ants.image_write(result, str(denoised_path))
+                del result
 
 def main() -> None:
     process_ds002748()
