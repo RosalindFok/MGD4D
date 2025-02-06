@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from path import Paths
 from plot import draw_atlas
-from config import IS_MD, Train_Config
+from config import IS_MD, Train_Config, Gender
 
 random.seed(66)
 
@@ -131,26 +131,49 @@ class Return_Dataloaders:
 #         assert fold in kfold_md_dir_paths.keys(), f"Unknown fold: {fold}, available folds: {kfold_md_dir_paths.keys()}"
 #         Dataset_Mild_Depression(md_path_list=kfold_md_dir_paths[fold]["train"], hc_path_list=kfold_hc_dir_paths[fold]["train"])
 
-
 class Dataset_Major_Depression(Dataset):
-    def __init__(self, md_path_list : list[tuple[dict[str, Path], int]]) -> None:
+    def __init__(self, path_list : list[dict[str, Any]], auxi_values : dict[str, dict[str, float]]) -> None:
         super().__init__()
-        self.path_list = md_path_list + hc_path_list
+        self.path_list = path_list
         random.shuffle(self.path_list)
+        self.anxi_values = auxi_values
     
-    def __getitem__(self, index) -> tuple:
-        path_dict, is_md = self.path_list[index]
-        sub_id = path_dict.pop("sub_id")
-        info_path = path_dict.pop("info")
-        with info_path.open("r") as f:
-            info = json.load(f)
-            auxi_info = [info["Sex"]]
-            for key, value in self.auxi_info_max.items():
-                auxi_info.append(info[key] / value)
-        auxi_info = torch.tensor(auxi_info, dtype=torch.float32) # dim=3
-        matrix = np.load(path_dict[self.atlas_name])
-        matrix = torch.tensor(matrix, dtype=torch.float32) # dim=[96, 96]
-        return auxi_info, matrix, is_md            
+    def __getitem__(self, index) -> tuple[dict[str, float]]:
+        path_dict = self.path_list[index]
+        # Auxiliary information
+        auxi_info = path_dict["auxi_info"]
+        ID = auxi_info["ID"]
+        tag = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
+        assert tag is not None, f"Unknown tag in ID: {ID}"
+        processed_auxi_info = {}
+        for attribute in ["Sex", "Age", "Education (years)"]:
+            assert attribute in auxi_info.keys(), f"Attribute {attribute} not found in auxiliary information"
+            if attribute == "Sex":
+                value = Gender.FEMALE if auxi_info["Sex"] == 2 else Gender.MALE if auxi_info["Sex"] == 1 else Gender.UNSPECIFIED
+                value /= max(Gender.FEMALE, Gender.MALE, Gender.UNSPECIFIED)
+            else:
+                value = auxi_info[attribute]
+                assert attribute in self.anxi_values.keys(), f"Attribute {attribute} not found in self.anxi_values"
+                # value = self.anxi_values[attribute]["mean"] if value == 0 else value
+                value /= self.anxi_values[attribute]["max"]
+            processed_auxi_info[attribute] = value
+
+        # Functional connectivity
+        processed_fc_matrices = {}
+        for atlas_name, fc_matrix_path in path_dict["fc"].items():
+            fc_matrix = np.load(fc_matrix_path)
+            # TODO 如何结合atlas信息编码？保留出脑区位置
+            processed_fc_matrices[atlas_name] = torch.tensor(fc_matrix)
+
+        # VBM
+        processed_vbm_matrices = {}
+        for group_name, vbm_matrix_path in path_dict["vbm"].items():
+            vbm_matrix = nib.load(vbm_matrix_path).get_fdata()
+            # Normalize to [0, 1]
+            vbm_matrix = (vbm_matrix - vbm_matrix.min()) / (vbm_matrix.max() - vbm_matrix.min())
+            processed_vbm_matrices[group_name] = torch.tensor(vbm_matrix, dtype=torch.float32)
+
+        return processed_auxi_info, processed_fc_matrices, processed_vbm_matrices, tag
 
     def __len__(self) -> int:
         return len(self.path_list)
@@ -173,6 +196,12 @@ class KFold_Major_Depression:
         # education years: 0 is unknown, min=3, max=23
         with auxi_info_path.open("r") as f:
             auxi_info = json.load(f) # {sub_id: {key: value, ...}, ...}
+            age_array = np.array([info_dict["Age"] for _, info_dict in auxi_info.items()])
+            education_years_array = np.array([info_dict["Education (years)"] for _, info_dict in auxi_info.items()])
+            age_array = age_array[age_array > 0]
+            education_years_array = education_years_array[education_years_array > 0]
+            self.auxi_values = {"Age" : {"mean": age_array.mean(), "max": age_array.max(), "min": age_array.min()},
+                                "Education (years)" : {"mean": education_years_array.mean(), "max": education_years_array.max(), "min": education_years_array.min()}}
 
         # Functional connectivity
         fc_path_dict = {} # {sub_id: {atlas_name: fc_matrix_path, ...}, ...}
@@ -238,8 +267,8 @@ class KFold_Major_Depression:
                     raise TypeError(f"Unknown type of atlas: {type(atlas)}")
         return atlas_labels_dict
 
-    def __k_fold__(self) -> dict[str, dict[int, dict[str, list[dict[str, Any]]]]]:
-        kfold_dir_paths = {} # {{group_name : {fold : {train_set, test_set}}}, ...}
+    def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
+        kfold_dir_paths = {} 
         subj_list = list(self.paths_dict.keys())
         fold = 1
         for train_index, test_index in self.kf.split(subj_list):
@@ -250,8 +279,8 @@ class KFold_Major_Depression:
 
     def get_dataloader_via_fold(self, fold : int) -> tuple[DataLoader, DataLoader]:
         kfold_dir_paths = self.__k_fold__()
-        train_dataset = Dataset_Major_Depression(md_path_list=kfold_dir_paths[fold]["train"])
-        test_dataset  = Dataset_Major_Depression(md_path_list=kfold_dir_paths[fold]["test"])
+        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values)
+        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values)
         train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
         test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
