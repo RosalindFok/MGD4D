@@ -23,15 +23,25 @@ class Functional_Connectomes_1000_Path:
 
 @dataclass(frozen=True)
 class Brainnetome_Atlas_Path:
-    Brainnetome_Atlas_dir_path:Path = Path("Brainnetome_Atlas")
-    BN_Atlas_246_1mm_nii_path:Path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_1mm.nii.gz"
-    BN_Atlas_246_2mm_nii_path:Path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_2mm.nii.gz"
-    BN_Atlas_246_3mm_nii_path:Path = Brainnetome_Atlas_dir_path / "BN_Atlas_246_3mm.nii.gz"
-    BNA_adjacent_matrix_path: Path = Brainnetome_Atlas_dir_path / "BNA_matrix_binary_246x246.csv"
+    root_path:Path = Path("Brainnetome_Atlas")
+    BN_Atlas_246_1mm_nii_path:Path = root_path / "BN_Atlas_246_1mm.nii.gz"
+    BN_Atlas_246_2mm_nii_path:Path = root_path / "BN_Atlas_246_2mm.nii.gz"
+    BN_Atlas_246_3mm_nii_path:Path = root_path / "BN_Atlas_246_3mm.nii.gz"
+    BNA_adjacent_matrix_path: Path = root_path / "BNA_matrix_binary_246x246.csv"
     assert BN_Atlas_246_1mm_nii_path.exists(), f"{BN_Atlas_246_1mm_nii_path} does not exist"
     assert BN_Atlas_246_2mm_nii_path.exists(), f"{BN_Atlas_246_2mm_nii_path} does not exist"
     assert BN_Atlas_246_3mm_nii_path.exists(), f"{BN_Atlas_246_3mm_nii_path} does not exist"
     assert BNA_adjacent_matrix_path.exists(), f"{BNA_adjacent_matrix_path} does not exist"
+
+@dataclass(frozen=True)
+class Atlas_Path:
+    root_path = Path("Atlas")
+    # AAL
+    AAL_dir_path = root_path / "AAL"
+    # HarvardOxford
+    HarvardOxford_dir_path = root_path / "HarvardOxford"
+    # Brainnetome
+    Brainnetome_Atlas: Brainnetome_Atlas_Path = Brainnetome_Atlas_Path
 
 @dataclass(frozen=True)
 class Run_Files_Path:
@@ -51,7 +61,6 @@ class Run_Files_Path:
 class Paths:
     Depression: Depression_Path = Depression_Path  
     Functional_Connectomes_1000: Functional_Connectomes_1000_Path = Functional_Connectomes_1000_Path
-    Brainnetome_Atlas: Brainnetome_Atlas_Path = Brainnetome_Atlas_Path
     Run_Files: Run_Files_Path = Run_Files_Path
     Fig_Dir: Path = Path("figs")
     Fig_Dir.mkdir(parents=True, exist_ok=True)

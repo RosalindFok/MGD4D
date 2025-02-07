@@ -34,15 +34,62 @@ def get_GPU_memory_usage() -> tuple[float, float]:
         return total_memory, mem_reserved
     
 class Encoder_Structure(nn.Module):
-    def __init__(self, matrices_number : int):
+    """
+    ResNet 3D: 3D structural matrices -> 1D embedding
+    """
+    def __init__(self, matrices_number : int) -> None:
         super().__init__()
-        self.resnet50s = nn.ModuleList([  
-            ResNet.resnet50() for _ in range(matrices_number)  
+        self.resnets = nn.ModuleList([  
+            ResNet.resnet26() for _ in range(matrices_number)  
         ]) 
 
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        assert len(input_dict) == len(self.resnet50s), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnet50s)})"
+        assert len(input_dict) == len(self.resnets), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnets)})"
         output_dict = {}
-        for (key, tensor), resnet50 in zip(input_dict.items(), self.resnet50s):
-            output_dict[key] = resnet50(tensor.unsqueeze(1))
+        for (key, tensor), resnet in zip(input_dict.items(), self.resnets):
+            output_dict[key] = resnet(tensor.unsqueeze(1))
         return output_dict
+
+class Encoder_Functional(nn.Module):
+    def __init__(self, ) -> None:
+        super().__init__()
+
+    def forward(self, input_dict : dict[str, torch.Tensor]) -> torch.Tensor:
+        return torch.cat(list(input_dict.values()), dim=1)
+
+class Encoder_Information(nn.Module):
+    """
+    Concatenate: {'feat1+feat2+...': concatenated_tensor}  
+    """
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return {'+'.join(list(input_dict.keys())) : torch.cat(list(input_dict.values()), dim=1)}
+    
+class LatentGraphDiffusion(nn.Module):
+    def __init__(self, ) -> None:
+        super().__init__()
+
+    def forward(self, x) -> torch.Tensor:
+        return x
+    
+class MGD4MD(nn.Module):
+    def __init__(self, structural_matrices_number : int,
+                ) -> None:
+        super().__init__()
+        # Encoders
+        self.encoder_s = Encoder_Structure(matrices_number=structural_matrices_number)
+        self.encoder_f = Encoder_Functional()
+        self.encoder_i = Encoder_Information()
+
+    def forward(self, structural_input_dict : dict[str, torch.Tensor],
+                      functional_input_dict : dict[str, torch.Tensor],
+                      information_input_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+        # encode
+        structural_embedding_dict = self.encoder_s(structural_input_dict) # 4个key，4个1维的embedding
+        functional_embedding_dict = self.encoder_f(functional_input_dict)
+        information_embedding_dict = self.encoder_i(information_input_dict) # 1个key，1个1维的embedding
+        
+        # latent graph diffusion
+        return information_embedding_dict

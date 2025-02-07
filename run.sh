@@ -1,7 +1,5 @@
 #!/bin/bash
 export PYTHONUNBUFFERED=1
-module load cuda/12.1
-source activate MGD4MD
 
 # Create a state file to control the collection process
 STATE_FILE="state_${BATCH_JOB_ID}.log"

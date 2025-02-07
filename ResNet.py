@@ -32,6 +32,9 @@ def downsample_basic_block(x, planes, stride, no_cuda=False):
 
 
 class BasicBlock(nn.Module):
+    """
+    2 layers
+    """
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
@@ -64,6 +67,9 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
+    """
+    3 layers
+    """
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
@@ -136,31 +142,31 @@ class Bottleneck(nn.Module):
 #         self.layer4 = self._make_layer(
 #             block, 512, layers[3], shortcut_type, stride=1, dilation=4)
 
-#         self.conv_seg = nn.Sequential(
-#                                         nn.ConvTranspose3d(
-#                                         512 * block.expansion,
-#                                         32,
-#                                         2,
-#                                         stride=2
-#                                         ),
-#                                         nn.BatchNorm3d(32),
-#                                         nn.ReLU(inplace=True),
-#                                         nn.Conv3d(
-#                                         32,
-#                                         32,
-#                                         kernel_size=3,
-#                                         stride=(1, 1, 1),
-#                                         padding=(1, 1, 1),
-#                                         bias=False), 
-#                                         nn.BatchNorm3d(32),
-#                                         nn.ReLU(inplace=True),
-#                                         nn.Conv3d(
-#                                         32,
-#                                         num_seg_classes,
-#                                         kernel_size=1,
-#                                         stride=(1, 1, 1),
-#                                         bias=False) 
-#                                         )
+        # self.conv_seg = nn.Sequential(
+        #                                 nn.ConvTranspose3d(
+        #                                 512 * block.expansion,
+        #                                 32,
+        #                                 2,
+        #                                 stride=2
+        #                                 ),
+        #                                 nn.BatchNorm3d(32),
+        #                                 nn.ReLU(inplace=True),
+        #                                 nn.Conv3d(
+        #                                 32,
+        #                                 32,
+        #                                 kernel_size=3,
+        #                                 stride=(1, 1, 1),
+        #                                 padding=(1, 1, 1),
+        #                                 bias=False), 
+        #                                 nn.BatchNorm3d(32),
+        #                                 nn.ReLU(inplace=True),
+        #                                 nn.Conv3d(
+        #                                 32,
+        #                                 num_seg_classes,
+        #                                 kernel_size=1,
+        #                                 stride=(1, 1, 1),
+        #                                 bias=False) 
+        #                                 )
 
 #         for m in self.modules():
 #             if isinstance(m, nn.Conv3d):
@@ -214,6 +220,7 @@ class ResNet(nn.Module):
     def __init__(self,
                  block : nn.Module,
                  layers : list[int],
+                 embedding_dim : int = 512,
                  shortcut_type='B'):
         self.inplanes = 64
         super(ResNet, self).__init__()
@@ -228,16 +235,17 @@ class ResNet(nn.Module):
         self.bn1 = nn.BatchNorm3d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0], shortcut_type)
-        self.layer2 = self._make_layer(
-            block, 128, layers[1], shortcut_type, stride=2)
-        self.layer3 = self._make_layer(
-            block, 256, layers[2], shortcut_type, stride=1, dilation=2)
-        self.layer4 = self._make_layer(
-            block, 512, layers[3], shortcut_type, stride=1, dilation=4)
+        self.layer1 = self._make_layer(block, 64,  layers[0], shortcut_type)
+        self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], shortcut_type, stride=1, dilation=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, stride=1, dilation=4)
 
-        # self.conv_seg = nn.Sequential(
-        #                                 )
+        self.embedding = nn.Sequential(
+            nn.AdaptiveAvgPool3d(1),  # output: [batchsize, 2048, 1, 1, 1]  
+            nn.Flatten(),  # output: [batchsize, 2048]  
+            nn.Linear(2048, embedding_dim),  # output: [batchsize, 512]  
+            nn.ReLU(inplace=True),  
+            nn.BatchNorm1d(embedding_dim))
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -282,12 +290,12 @@ class ResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        # x = self.conv_seg(x)
-
+        x = self.embedding(x)
         return x
 
 def resnet10(**kwargs):
-    """Constructs a ResNet-18 model.
+    """Constructs a ResNet-10 model.
+    10 = 1 + 1*2 + 1*2 + 1*2 + 1*2 + 1
     """
     model = ResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
     return model
@@ -295,13 +303,23 @@ def resnet10(**kwargs):
 
 def resnet18(**kwargs):
     """Constructs a ResNet-18 model.
+    18 = 1 + 2*2 + 2*2 + 2*2 + 2*2 + 1
     """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    return model
+
+def resnet26(**kwargs):
+    """Constructs a ResNet-26 model.
+    26 = 1 + 2*3 + 2*3 + 2*3 + 2*3 + 1
+    MGD4MD
+    """
+    model = ResNet(Bottleneck, [2, 2, 2, 2], **kwargs)
     return model
 
 
 def resnet34(**kwargs):
     """Constructs a ResNet-34 model.
+    34 = 1 + 3*2 + 4*2 + 6*2 + 3*2 + 1
     """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     return model
@@ -309,6 +327,7 @@ def resnet34(**kwargs):
 
 def resnet50(**kwargs):
     """Constructs a ResNet-50 model.
+    50 = 1 + 3*3 + 4*3 + 6*3 + 3*3 + 1
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
@@ -316,6 +335,7 @@ def resnet50(**kwargs):
 
 def resnet101(**kwargs):
     """Constructs a ResNet-101 model.
+    101 = 1 + 3*3 + 4*3 + 23*3 + 3*3 + 1
     """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     return model
@@ -323,6 +343,7 @@ def resnet101(**kwargs):
 
 def resnet152(**kwargs):
     """Constructs a ResNet-101 model.
+    152 = 1 + 3*3 + 8*3 + 36*3 + 3*3 + 1
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     return model
@@ -330,6 +351,7 @@ def resnet152(**kwargs):
 
 def resnet200(**kwargs):
     """Constructs a ResNet-101 model.
+    200 = 1 + 3*3 + 24*3 + 36*3 + 3*3 + 1
     """
     model = ResNet(Bottleneck, [3, 24, 36, 3], **kwargs)
     return model

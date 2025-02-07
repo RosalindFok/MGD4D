@@ -19,5 +19,5 @@ class IS_MD:
 class Train_Config:
     n_splits: range = range(1,6)
     shuffle: bool = False
-    batch_size: int = 64
+    batch_size: int = 8
     num_workers: int = 6 if platform.system() == 'Linux' else 0

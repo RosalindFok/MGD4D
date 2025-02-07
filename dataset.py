@@ -1,6 +1,9 @@
 import json
 import torch
 import random
+import logging  
+import zipfile  
+import requests  
 import numpy as np
 import nibabel as nib
 from tqdm import tqdm
@@ -132,11 +135,14 @@ class Return_Dataloaders:
 #         Dataset_Mild_Depression(md_path_list=kfold_md_dir_paths[fold]["train"], hc_path_list=kfold_hc_dir_paths[fold]["train"])
 
 class Dataset_Major_Depression(Dataset):
-    def __init__(self, path_list : list[dict[str, Any]], auxi_values : dict[str, dict[str, float]]) -> None:
+    def __init__(self, path_list : list[dict[str, Any]], 
+                       auxi_values : dict[str, dict[str, float]],
+                       atlas_labels_dict : dict[str, dict[str, Any]]) -> None:
         super().__init__()
         self.path_list = path_list
         random.shuffle(self.path_list)
         self.anxi_values = auxi_values
+        self.atlas_labels_dict = atlas_labels_dict
     
     def __getitem__(self, index) -> tuple[dict[str, float]]:
         path_dict = self.path_list[index]
@@ -156,7 +162,7 @@ class Dataset_Major_Depression(Dataset):
                 assert attribute in self.anxi_values.keys(), f"Attribute {attribute} not found in self.anxi_values"
                 # value = self.anxi_values[attribute]["mean"] if value == 0 else value
                 value /= self.anxi_values[attribute]["max"]
-            processed_auxi_info[attribute] = value
+            processed_auxi_info[attribute] = torch.tensor([value], dtype=torch.float32)
 
         # Functional connectivity
         processed_fc_matrices = {}
@@ -164,6 +170,10 @@ class Dataset_Major_Depression(Dataset):
             fc_matrix = np.load(fc_matrix_path)
             # TODO 如何结合atlas信息编码？保留出脑区位置
             processed_fc_matrices[atlas_name] = torch.tensor(fc_matrix)
+            labels = self.atlas_labels_dict[atlas_name]["labels"]
+            if not atlas_name == "AAL":
+                print(len(labels), fc_matrix.shape)
+        exit()
 
         # VBM
         processed_vbm_matrices = {}
@@ -234,11 +244,16 @@ class KFold_Major_Depression:
         # K Fold
         self.kf = KFold(n_splits=max(train_config.n_splits), shuffle=train_config.shuffle)
 
-    def __download_atlas__(self) -> dict[Any, list[str]]:
+    def __download_atlas__(self) -> dict[str, dict[str, Any]]:
         """
         Download atlas from nilearn
         """
+        # set the nilearn log level during class initialization
+        logging.getLogger('nilearn').setLevel(logging.ERROR) 
+
         downloaded_atlas_dir_path = self.rest_meta_mdd_dir_path / "downloaded_atlas"
+        # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
+        # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path
         method_pair = { # {name of atlas : {atlas, coresponding matrix}}
             # https://nilearn.github.io/stable/modules/description/aal.html
             "AAL" : datasets.fetch_atlas_aal(data_dir=downloaded_atlas_dir_path),
@@ -279,8 +294,8 @@ class KFold_Major_Depression:
 
     def get_dataloader_via_fold(self, fold : int) -> tuple[DataLoader, DataLoader]:
         kfold_dir_paths = self.__k_fold__()
-        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values)
-        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values)
+        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, atlas_labels_dict=self.atlas_labels_dict)
+        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, atlas_labels_dict=self.atlas_labels_dict)
         train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
         test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)

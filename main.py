@@ -1,11 +1,8 @@
 import torch
 
 from config import Train_Config
-from models import device, Encoder_Structure
+from models import device, MGD4MD
 from dataset import get_major_dataloader_via_fold
-
-def move_to_device(tensor_dict : dict[str, torch.Tensor], device : torch.device) -> dict[str, torch.Tensor]:
-    return {k: v.to(device) for k, v in tensor_dict.items()}
 
 def main() -> None:
     # 
@@ -17,9 +14,10 @@ def main() -> None:
         auxi_info, fc_matrices, vbm_matrices, tag = next(iter(test_dataloader))
 
         # Model
-        encoder_structure = Encoder_Structure(matrices_number=len(vbm_matrices)).to(device)
+        model = MGD4MD(structural_matrices_number=len(vbm_matrices)).to(device)
 
         # Train
+        move_to_device = lambda tensor_dict, device: {k: v.to(device) for k, v in tensor_dict.items()}
         for auxi_info, fc_matrices, vbm_matrices, tag in train_dataloader:
             # Move to GPU
             auxi_info = move_to_device(auxi_info, device)
@@ -27,9 +25,9 @@ def main() -> None:
             vbm_matrices = move_to_device(vbm_matrices, device)
             tag = tag.to(device)
 
-            ## Structural Encoder
-            # Input: wc1,wc2,mwc1,mwc2
-            output_dict = encoder_structure(input_dict=vbm_matrices)
+            output_dict = model(structural_input_dict=vbm_matrices,
+                                functional_input_dict=fc_matrices,
+                                information_input_dict=auxi_info)
             for key, value in output_dict.items():
                 print(key, value.shape)
             exit()
