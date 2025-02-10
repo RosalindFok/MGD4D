@@ -1,24 +1,18 @@
 import json
 import torch
-import random
-import logging  
-import zipfile  
-import requests  
 import numpy as np
-import nibabel as nib
+import torch.multiprocessing
 from tqdm import tqdm
 from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
-from nilearn import datasets
+from itertools import zip_longest  
 from dataclasses import dataclass
 from sklearn.model_selection import KFold
 from torch.utils.data import Dataset, DataLoader
+torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "RuntimeError: unable to open shared memory object </torch_54907_2465325546_996> in read-write mode: Too many open files (24)"
 
 from path import Paths
-from plot import draw_atlas
 from config import IS_MD, Train_Config, Gender
-
-random.seed(66)
 
 @dataclass
 class Return_Dataloaders:
@@ -136,21 +130,22 @@ class Return_Dataloaders:
 
 class Dataset_Major_Depression(Dataset):
     def __init__(self, path_list : list[dict[str, Any]], 
-                       auxi_values : dict[str, dict[str, float]],
-                       atlas_labels_dict : dict[str, dict[str, Any]]) -> None:
+                       auxi_values : dict[str, dict[str, float]]) -> None:
         super().__init__()
         self.path_list = path_list
-        random.shuffle(self.path_list)
         self.anxi_values = auxi_values
-        self.atlas_labels_dict = atlas_labels_dict
+        self.triu_indecices = {atlas_name: np.triu_indices(matrix.shape[0]) for atlas_name, matrix in np.load(path_list[0]["fc"], allow_pickle=True).items()}
     
-    def __getitem__(self, index) -> tuple[dict[str, float]]:
+    def __getitem__(self, index) -> tuple[dict[str, torch.Tensor], 
+                                          dict[str, dict[str, torch.Tensor]], 
+                                          dict[str, torch.Tensor], 
+                                          int]:
         path_dict = self.path_list[index]
-        # Auxiliary information
+        # # Auxiliary information
         auxi_info = path_dict["auxi_info"]
         ID = auxi_info["ID"]
         tag = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
-        assert tag is not None, f"Unknown tag in ID: {ID}"
+        # assert tag is not None, f"Unknown tag in ID: {ID}"
         processed_auxi_info = {}
         for attribute in ["Sex", "Age", "Education (years)"]:
             assert attribute in auxi_info.keys(), f"Attribute {attribute} not found in auxiliary information"
@@ -165,25 +160,27 @@ class Dataset_Major_Depression(Dataset):
             processed_auxi_info[attribute] = torch.tensor([value], dtype=torch.float32)
 
         # Functional connectivity
-        processed_fc_matrices = {}
-        for atlas_name, fc_matrix_path in path_dict["fc"].items():
-            fc_matrix = np.load(fc_matrix_path)
-            # TODO 如何结合atlas信息编码？保留出脑区位置
-            processed_fc_matrices[atlas_name] = torch.tensor(fc_matrix)
-            labels = self.atlas_labels_dict[atlas_name]["labels"]
-            if not atlas_name == "AAL":
-                print(len(labels), fc_matrix.shape)
-        exit()
+        fc_matrices = {}
+        for atlas_name, matrix in np.load(path_dict["fc"], allow_pickle=True).items():
+            assert np.allclose(matrix, matrix.T), f"{atlas_name} matrix {matrix} is not symmetric"
+            # extract the upper triangular part of the matrix as a flattened array  
+            fc_embedding = matrix[self.triu_indecices[atlas_name]] 
+            fc_matrices[atlas_name] = {
+                                        "matrix" : torch.tensor(matrix, dtype=torch.float32),
+                                        "embedding" : torch.tensor(fc_embedding, dtype=torch.float32)
+                                    }
 
         # VBM
-        processed_vbm_matrices = {}
-        for group_name, vbm_matrix_path in path_dict["vbm"].items():
-            vbm_matrix = nib.load(vbm_matrix_path).get_fdata()
-            # Normalize to [0, 1]
-            vbm_matrix = (vbm_matrix - vbm_matrix.min()) / (vbm_matrix.max() - vbm_matrix.min())
-            processed_vbm_matrices[group_name] = torch.tensor(vbm_matrix, dtype=torch.float32)
+        vbm_matrices = {}
+        for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
+            # normalize the matrix to [-1, 1]
+            matrix = 2*((matrix - matrix.min()) / (matrix.max() - matrix.min())) - 1
+            vbm_matrices[group_name] = torch.tensor(matrix, dtype=torch.float32)
 
-        return processed_auxi_info, processed_fc_matrices, processed_vbm_matrices, tag
+        # tag
+        tag = torch.tensor(tag, dtype=torch.float32)
+
+        return processed_auxi_info, fc_matrices, vbm_matrices, tag
 
     def __len__(self) -> int:
         return len(self.path_list)
@@ -195,8 +192,6 @@ class KFold_Major_Depression:
         self.rest_meta_mdd_dir_path = rest_meta_mdd_dir_path
         dir_name = "ROISignals_FunImgARglobalCWF" if is_global_signal_regression else "ROISignals_FunImgARCWF"
         
-        self.atlas_labels_dict = self.__download_atlas__()
-
         # Auxiliary information
         auxi_info_path = rest_meta_mdd_dir_path / "participants_info.json"
         assert auxi_info_path.exists(), f"Participants info file not found in {rest_meta_mdd_dir_path}"
@@ -214,21 +209,14 @@ class KFold_Major_Depression:
                                 "Education (years)" : {"mean": education_years_array.mean(), "max": education_years_array.max(), "min": education_years_array.min()}}
 
         # Functional connectivity
-        fc_path_dict = {} # {sub_id: {atlas_name: fc_matrix_path, ...}, ...}
+        fc_path_dict = {} 
         for sub_dir_path in tqdm(list((rest_meta_mdd_dir_path / dir_name).iterdir()), desc=f"Loading {dir_name}", leave=True):
-            path_dict = {} # {sub_id:info_path, atalas_name:fc_matrix_path, ...}
-            for fc_matrix_path in sub_dir_path.glob("*.npy"):
-                atlas_name = fc_matrix_path.stem.split("_")[0]
-                path_dict[atlas_name] = fc_matrix_path
-            fc_path_dict[sub_dir_path.name] = path_dict
-        
+            fc_matrix_path = [x for x in sub_dir_path.glob("*.npz")]
+            assert len(fc_matrix_path) == 1, f"Multiple or no fc matrix found in {sub_dir_path}"
+            fc_path_dict[sub_dir_path.name] = fc_matrix_path[0]
+
         # VBM
-        vbm_path_dict = {key:{} for key in fc_path_dict.keys()} # {sub_id: {group_name: vbm_matrix_path, ...}, ...}
-        for group_name in ["wc1", "wc2", "mwc1", "mwc2"]:
-            for nii_path in tqdm(list((rest_meta_mdd_dir_path / group_name).iterdir()), desc=f"Loading {group_name}", leave=True):
-                key = nii_path.stem.split(".")[0]
-                assert key in vbm_path_dict.keys(), f"Unknown key: {key}"
-                vbm_path_dict[key][group_name] = nii_path
+        vbm_path_dict = {path.stem.split(".")[0] : path for path in list((rest_meta_mdd_dir_path / "VBM").iterdir())}
         
         assert len(auxi_info)==len(fc_path_dict)==len(vbm_path_dict), f"Length mismatch: {len(auxi_info)} != {len(fc_path_dict)} != {len(vbm_path_dict)}"
         
@@ -244,47 +232,12 @@ class KFold_Major_Depression:
         # K Fold
         self.kf = KFold(n_splits=max(train_config.n_splits), shuffle=train_config.shuffle)
 
-    def __download_atlas__(self) -> dict[str, dict[str, Any]]:
-        """
-        Download atlas from nilearn
-        """
-        # set the nilearn log level during class initialization
-        logging.getLogger('nilearn').setLevel(logging.ERROR) 
-
-        downloaded_atlas_dir_path = self.rest_meta_mdd_dir_path / "downloaded_atlas"
-        # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
-        # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path
-        method_pair = { # {name of atlas : {atlas, coresponding matrix}}
-            # https://nilearn.github.io/stable/modules/description/aal.html
-            "AAL" : datasets.fetch_atlas_aal(data_dir=downloaded_atlas_dir_path),
-            # https://nilearn.github.io/stable/modules/description/harvard_oxford.html
-            "HOC" :  datasets.fetch_atlas_harvard_oxford("cort-maxprob-thr50-1mm", data_dir=downloaded_atlas_dir_path),
-            # https://nilearn.github.io/stable/modules/description/harvard_oxford.html
-            "HOS" :  datasets.fetch_atlas_harvard_oxford("sub-maxprob-thr50-1mm", data_dir=downloaded_atlas_dir_path),
-            # https://nilearn.github.io/stable/modules/description/craddock_2012.html
-            # Note: There are no labels for the Craddock atlas, which have been generated from applying spatially constrained clustering on resting-state data.
-            # "Craddock" : datasets.fetch_atlas_craddock_2012(data_dir=downloaded_atlas_dir_path),
-        }
-        atlas_labels_dict = {}
-        for key, value in method_pair.items():
-            # type of AAL atlas is str, path to nifti file containing the regions.
-            # type of Harvard-Oxford atlas is nibabel image.
-            atlas, labels = value.maps,value.labels
-            atlas_labels_dict[key] = {"atlas" : atlas, "labels" : labels}
-            # plot atlas
-            fig_path = Paths.Fig_Dir / f"{key}.png"
-            if not fig_path.exists():
-                if type(atlas) == str: # aal
-                    draw_atlas(atlas=nib.load(atlas), saved_path=fig_path)
-                elif type(atlas) == nib.nifti1.Nifti1Image: # harvard-oxford
-                    draw_atlas(atlas=atlas, saved_path=fig_path)
-                else:
-                    raise TypeError(f"Unknown type of atlas: {type(atlas)}")
-        return atlas_labels_dict
-
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
         subj_list = list(self.paths_dict.keys())
+        group_1 = [item for item in subj_list if "-1-" in item]  
+        group_2 = [item for item in subj_list if "-2-" in item] 
+        subj_list = [item for item in sum(zip_longest(group_1, group_2), ()) if item is not None]
         fold = 1
         for train_index, test_index in self.kf.split(subj_list):
             kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
@@ -294,10 +247,10 @@ class KFold_Major_Depression:
 
     def get_dataloader_via_fold(self, fold : int) -> tuple[DataLoader, DataLoader]:
         kfold_dir_paths = self.__k_fold__()
-        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, atlas_labels_dict=self.atlas_labels_dict)
-        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, atlas_labels_dict=self.atlas_labels_dict)
-        train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
-        test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers)
+        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values)
+        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values)
+        train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
+        test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
         return return_dataloaders
 

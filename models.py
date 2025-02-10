@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn  
+import nibabel as nib
+from scipy.io import loadmat  
 
 import ResNet
+from path import Paths
+from plot import draw_atlas
 
 def _setup_device_() -> list[torch.device]:
     """
@@ -50,12 +54,46 @@ class Encoder_Structure(nn.Module):
             output_dict[key] = resnet(tensor.unsqueeze(1))
         return output_dict
 
+def load_atlas() -> dict[str, list[str]]:
+        """
+        """
+        # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
+        # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path
+        aal_mri = Paths.Atlas.AAL.mri_path
+        aal_labels = Paths.Atlas.AAL.labels_path
+        hoc_mri = Paths.Atlas.HarvardOxford.cort_mri_path
+        hoc_labels = Paths.Atlas.HarvardOxford.cort_labels_path
+        hos_mri = Paths.Atlas.HarvardOxford.sub_mri_path
+        hos_labels = Paths.Atlas.HarvardOxford.sub_labels_path
+        
+        atlas_labels_dict = {}
+        for name, mri_path, labels_path in zip(["AAL", "HOC", "HOS"], [aal_mri, hoc_mri, hos_mri], [aal_labels, hoc_labels, hos_labels]):
+            labels = loadmat(labels_path)["Reference"]
+            labels = [str(label[0][0]) for label in labels]
+            # the first one is None, which is not used in REST-meta-MDD
+            assert labels[0] == "None", f"First label is not None: {labels[0]}"
+            labels = labels[1:]
+            atlas_labels_dict[name] = {index:label for index, label in enumerate(labels)}
+            # plot atlas
+            fig_path = Paths.Fig_Dir / f"{name}.png"
+            if not fig_path.exists():
+                draw_atlas(atlas=nib.load(mri_path), saved_path=fig_path)
+        return atlas_labels_dict
+
 class Encoder_Functional(nn.Module):
+    """
+    upper triangle of functional connectivity matrices
+    """
     def __init__(self, ) -> None:
         super().__init__()
+        self.atlas_labels_dict = load_atlas()
+    
+    def subgraph(self, brain_network_name : str) -> None:
+        return
 
-    def forward(self, input_dict : dict[str, torch.Tensor]) -> torch.Tensor:
-        return torch.cat(list(input_dict.values()), dim=1)
+    def forward(self, input_dict : dict[str, dict[str, torch.Tensor]]) -> torch.Tensor:
+        output_dict = {k:v["embedding"] for k,v in input_dict.items()}
+        return output_dict
 
 class Encoder_Information(nn.Module):
     """
@@ -70,9 +108,21 @@ class Encoder_Information(nn.Module):
 class LatentGraphDiffusion(nn.Module):
     def __init__(self, ) -> None:
         super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(13629, 2**10),
+            nn.Tanh(),
+            nn.Linear(2**10, 2**6),
+            nn.Tanh(),
+            nn.Linear(2**6, 1)
+        )
 
-    def forward(self, x) -> torch.Tensor:
-        return x
+    def forward(self, *embedding_dicts : dict[str, torch.Tensor]) -> torch.Tensor:
+        flattened_tensor = []
+        for embedding_dict in embedding_dicts:
+            for key, tensor in embedding_dict.items():
+                flattened_tensor.append(tensor)
+        flattened_tensor = torch.cat(flattened_tensor, dim=1)
+        return self.mlp(flattened_tensor)
     
 class MGD4MD(nn.Module):
     def __init__(self, structural_matrices_number : int,
@@ -83,13 +133,21 @@ class MGD4MD(nn.Module):
         self.encoder_f = Encoder_Functional()
         self.encoder_i = Encoder_Information()
 
+        # LatentGraphDiffusion
+        self.lgd = LatentGraphDiffusion()
+
+        # prediction
+        self.sigmoid = nn.Sigmoid()
+
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
                       functional_input_dict : dict[str, torch.Tensor],
                       information_input_dict: dict[str, torch.Tensor]) -> torch.Tensor:
         # encode
-        structural_embedding_dict = self.encoder_s(structural_input_dict) # 4个key，4个1维的embedding
+        structural_embedding_dict = self.encoder_s(structural_input_dict) 
         functional_embedding_dict = self.encoder_f(functional_input_dict)
-        information_embedding_dict = self.encoder_i(information_input_dict) # 1个key，1个1维的embedding
+        information_embedding_dict = self.encoder_i(information_input_dict) 
         
         # latent graph diffusion
-        return information_embedding_dict
+        p = self.lgd(structural_embedding_dict, functional_embedding_dict, information_embedding_dict)
+        p = self.sigmoid(p)
+        return p

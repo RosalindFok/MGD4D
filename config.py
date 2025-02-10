@@ -21,3 +21,5 @@ class Train_Config:
     shuffle: bool = False
     batch_size: int = 8
     num_workers: int = 6 if platform.system() == 'Linux' else 0
+    epochs: range = range(100)
+    lr: float = 1e-4

@@ -56,7 +56,7 @@ def adjust_dim_of_antsImage(image_5d_path : Path) -> None:
 def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path, 
                                             participants_info : pd.DataFrame | dict,
                                             anat3d_path : Path, func4d_path : Path, 
-                                            atlas_path : Path = Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path
+                                            atlas_path : Path = Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path
                                         ) -> None:
     # Save participant's information
     info_json_path = saved_dir_path / "info.json"
@@ -139,7 +139,7 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
     fc_matrix_path = saved_dir_path / "fc_matrix.npy"
     if not fc_matrix_path.exists():
         start_time = time.time()
-        atlas = nib.load(Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path)
+        atlas = nib.load(Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)
         denoised_func = nib.load(denoised_func_path)
         masker = maskers.NiftiLabelsMasker(labels_img=atlas, standardize="zscore_sample")
         time_series = masker.fit_transform(denoised_func)
@@ -178,7 +178,7 @@ def process_ds002748(dir_path : Path = Paths.Depression.ds002748_dir_path,
                                                 participants_info=participants_info,
                                                 anat3d_path=sub_anat_nii_path_dict[sub_name], 
                                                 func4d_path=sub_func_nii_path_dict[sub_name],
-                                                atlas_path=Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path)        
+                                                atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)        
 
 def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
                      saved_root_dir_path : Path = Paths.Run_Files.run_files_ds003007_dir_path) -> None:
@@ -214,7 +214,7 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
                                                 participants_info=participants_info,
                                                 anat3d_path=pre_anat_file_path, 
                                                 func4d_path=pre_func_file_path,
-                                                atlas_path=Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path) 
+                                                atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path) 
 
         # post
         saved_post_dir_path = saved_root_dir_path / "post" / d.name
@@ -229,7 +229,7 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
                                                     participants_info=participants_info,
                                                     anat3d_path=None, 
                                                     func4d_path=post_func_file_path,
-                                                    atlas_path=Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path)
+                                                    atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)
         else:
             post_anat_file_path = [x for x in (d / "ses-post" / "anat").glob("*")]
             assert len(post_anat_file_path) == 1, f"len(post_anat_file_path)={len(post_anat_file_path)} != 1"
@@ -238,7 +238,7 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
                                                     participants_info=participants_info,
                                                     anat3d_path=post_anat_file_path,
                                                     func4d_path=post_func_file_path,
-                                                    atlas_path=Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path)
+                                                    atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)
 
 def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
                       saved_root_dir_path : Path  = Paths.Run_Files.run_files_cambridge_dir_path) -> None:
@@ -260,13 +260,13 @@ def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
                                                         participants_info=participants_info,
                                                         anat3d_path=sub_dir_path / "anat" / "mprage_skullstripped.nii.gz", 
                                                         func4d_path=sub_dir_path / "func" / "rest.nii.gz",
-                                                        atlas_path=Paths.Brainnetome_Atlas.BN_Atlas_246_1mm_nii_path)   
+                                                        atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)   
                 
         # TODO sub01361 有明显异常，需要检查
             
 
-def read_adjacent_matrix_of_brainnetome_atlas(file_path : Path = Paths.Brainnetome_Atlas.BNA_adjacent_matrix_path) -> np.array:
-    return pd.read_csv(file_path, header=None).values # shape = (246, 246)
+# def read_adjacent_matrix_of_brainnetome_atlas(file_path : Path = Paths.Atlas.Brainnetome.BNA_adjacent_matrix_path) -> np.array:
+    # return pd.read_csv(file_path, header=None).values # shape = (246, 246)
 
 def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_path,
                           saved_root_dir_path : Path  = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
@@ -336,15 +336,15 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                     "HOS" : ROISignals[5:, 212:228],
                 }           
 
-                for atlas_name, time_series in time_series_pair.items():
-                    # atlas = atlas_labels_dict[atlas_name]["atlas"]
-                    # labels = atlas_labels_dict[atlas_name]["labels"]
-                    fc_matrix_path = saved_dir_path / f"{atlas_name}_fc_matrix.npy"
-                    if not fc_matrix_path.exists():
+                fc_matrices_path = saved_dir_path / f"fc_matrix.npz"
+                if not fc_matrices_path.exists():
+                    fc_matrices = {}
+                    for atlas_name, time_series in time_series_pair.items():
                         matrix = connectome.ConnectivityMeasure(kind='correlation', standardize='zscore_sample').fit_transform([time_series])[0] 
                         np.fill_diagonal(matrix, 0) # set the diagonal to 0 (1 -> 0)
-                        np.save(fc_matrix_path, matrix)
                         plot_heap_map(matrix=matrix, saved_dir_path=saved_dir_path, fig_name=f"{atlas_name}_fc_matrix.svg")
+                        fc_matrices[atlas_name] = matrix
+                    np.savez(fc_matrices_path, **fc_matrices)
 
     # VBM
     vbm_dir_path = dir_path / "REST-meta-MDD-VBM-Phase1-Sharing" / "VBM"
@@ -352,6 +352,7 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
     # wc2: White matter density in MNI space
     # mwc1: Gray matter volume in MNI space
     # mwc2: White matter volume in MNI space
+    vbm_path_dict = {} # {subject_name : {group_name : file_path}}
     for group_name in ["wc1", "wc2", "mwc1", "mwc2"]:
         saved_dir_path = saved_root_dir_path / group_name
         saved_dir_path.mkdir(parents=True, exist_ok=True)
@@ -363,6 +364,15 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                 result = ants.denoise_image(image=ants.image_read(str(nii_path)))
                 ants.image_write(result, str(denoised_path))
                 del result
+            subject_name = nii_path.stem.split(".")[0]
+            vbm_path_dict.setdefault(subject_name, {})[group_name] = denoised_path
+    saved_dir_path = saved_root_dir_path / "VBM"
+    saved_dir_path.mkdir(parents=True, exist_ok=True)
+    for subject_name, group_name_path_dict in tqdm(vbm_path_dict.items(), desc="Process on VBM", leave=True):
+        npz_path = saved_dir_path / f"{subject_name}.npz"
+        if not npz_path.exists():
+            data = {name : nib.load(path).get_fdata() for name, path in group_name_path_dict.items()}
+            np.savez_compressed(npz_path, **data)
 
 def main() -> None:
     process_ds002748()
@@ -370,7 +380,7 @@ def main() -> None:
     # TODO
     # process_Cambridge()
     process_rest_meta_mdd()
-    adjacent_matrix = read_adjacent_matrix_of_brainnetome_atlas()
+    # adjacent_matrix = read_adjacent_matrix_of_brainnetome_atlas()
 
 if __name__ == "__main__":
     main()

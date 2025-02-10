@@ -1,5 +1,5 @@
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 dataset_dir_path = Path("..") / "dataset"
 
@@ -21,13 +21,33 @@ class Functional_Connectomes_1000_Path:
     demographics_txt_path: Path = root_dir / "Cambridge_Buckner_part1" / "Cambridge_Buckner_demographics.txt"
     assert demographics_txt_path.exists(), f"{demographics_txt_path} does not exist"
 
+Atlas_root_dir_path = Path("Atlas")
+
 @dataclass(frozen=True)
-class Brainnetome_Atlas_Path:
-    root_path:Path = Path("Brainnetome_Atlas")
-    BN_Atlas_246_1mm_nii_path:Path = root_path / "BN_Atlas_246_1mm.nii.gz"
-    BN_Atlas_246_2mm_nii_path:Path = root_path / "BN_Atlas_246_2mm.nii.gz"
-    BN_Atlas_246_3mm_nii_path:Path = root_path / "BN_Atlas_246_3mm.nii.gz"
-    BNA_adjacent_matrix_path: Path = root_path / "BNA_matrix_binary_246x246.csv"
+class AAL_Path:
+    dir_path: Path = Atlas_root_dir_path / "AAL"
+    mri_path: Path = dir_path / "aal.nii"
+    labels_path: Path = dir_path / "aal_Labels.mat"
+
+@dataclass(frozen=True)
+class HarvardOxford_Path:
+    dir_path: Path = Atlas_root_dir_path / "HarvardOxford"
+    cort_mri_path: Path = dir_path / "HarvardOxford-cort-maxprob-thr25-2mm_YCG.nii"
+    cort_labels_path: Path = dir_path / "HarvardOxford-cort-maxprob-thr25-2mm_YCG_Labels.mat"
+    sub_mri_path: Path = dir_path / "HarvardOxford-sub-maxprob-thr25-2mm_YCG.nii"
+    sub_labels_path: Path = dir_path / "HarvardOxford-sub-maxprob-thr25-2mm_YCG_Labels.mat"
+    assert cort_mri_path.exists(), f"{cort_mri_path} does not exist"
+    assert cort_labels_path.exists(), f"{cort_labels_path} does not exist"
+    assert sub_mri_path.exists(), f"{sub_mri_path} does not exist"
+    assert sub_labels_path.exists(), f"{sub_labels_path} does not exist"
+
+@dataclass(frozen=True)
+class Brainnetome_Path:
+    dir_path: Path = Atlas_root_dir_path / "Brainnetome"
+    BN_Atlas_246_1mm_nii_path: Path = dir_path / "BN_Atlas_246_1mm.nii.gz"
+    BN_Atlas_246_2mm_nii_path: Path = dir_path / "BN_Atlas_246_2mm.nii.gz"
+    BN_Atlas_246_3mm_nii_path: Path = dir_path / "BN_Atlas_246_3mm.nii.gz"
+    BNA_adjacent_matrix_path : Path = dir_path / "BNA_matrix_binary_246x246.csv"
     assert BN_Atlas_246_1mm_nii_path.exists(), f"{BN_Atlas_246_1mm_nii_path} does not exist"
     assert BN_Atlas_246_2mm_nii_path.exists(), f"{BN_Atlas_246_2mm_nii_path} does not exist"
     assert BN_Atlas_246_3mm_nii_path.exists(), f"{BN_Atlas_246_3mm_nii_path} does not exist"
@@ -35,13 +55,9 @@ class Brainnetome_Atlas_Path:
 
 @dataclass(frozen=True)
 class Atlas_Path:
-    root_path = Path("Atlas")
-    # AAL
-    AAL_dir_path = root_path / "AAL"
-    # HarvardOxford
-    HarvardOxford_dir_path = root_path / "HarvardOxford"
-    # Brainnetome
-    Brainnetome_Atlas: Brainnetome_Atlas_Path = Brainnetome_Atlas_Path
+    AAL: AAL_Path = AAL_Path
+    HarvardOxford: HarvardOxford_Path = HarvardOxford_Path
+    Brainnetome: Brainnetome_Path = Brainnetome_Path
 
 @dataclass(frozen=True)
 class Run_Files_Path:
@@ -61,6 +77,7 @@ class Run_Files_Path:
 class Paths:
     Depression: Depression_Path = Depression_Path  
     Functional_Connectomes_1000: Functional_Connectomes_1000_Path = Functional_Connectomes_1000_Path
+    Atlas: Atlas_Path = Atlas_Path
     Run_Files: Run_Files_Path = Run_Files_Path
     Fig_Dir: Path = Path("figs")
     Fig_Dir.mkdir(parents=True, exist_ok=True)

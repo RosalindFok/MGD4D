@@ -233,7 +233,7 @@ class ResNet(nn.Module):
             bias=False)
             
         self.bn1 = nn.BatchNorm3d(64)
-        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64,  layers[0], shortcut_type)
         self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, stride=2)
@@ -241,10 +241,10 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, stride=1, dilation=4)
 
         self.embedding = nn.Sequential(
-            nn.AdaptiveAvgPool3d(1),  # output: [batchsize, 2048, 1, 1, 1]  
-            nn.Flatten(),  # output: [batchsize, 2048]  
-            nn.Linear(2048, embedding_dim),  # output: [batchsize, 512]  
-            nn.ReLU(inplace=True),  
+            nn.AdaptiveAvgPool3d(1),  # output: [batchsize, 512*block.expansion, 1, 1, 1]  
+            nn.Flatten(),  # output: [batchsize, 512*block.expansion]  
+            nn.Linear(512*block.expansion, embedding_dim),  # output: [batchsize, 512]  
+            self.tanh,
             nn.BatchNorm1d(embedding_dim))
 
         for m in self.modules():
@@ -284,7 +284,7 @@ class ResNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)
+        x = self.tanh(x)
         x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
