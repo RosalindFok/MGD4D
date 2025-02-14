@@ -5,6 +5,7 @@ import torch.multiprocessing
 from tqdm import tqdm
 from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
+from functools import partial
 from itertools import zip_longest  
 from dataclasses import dataclass
 from sklearn.model_selection import KFold
@@ -134,7 +135,6 @@ class Dataset_Major_Depression(Dataset):
         super().__init__()
         self.path_list = path_list
         self.anxi_values = auxi_values
-        self.triu_indecices = {atlas_name: np.triu_indices(matrix.shape[0]) for atlas_name, matrix in np.load(path_list[0]["fc"], allow_pickle=True).items()}
     
     def __getitem__(self, index) -> tuple[dict[str, torch.Tensor], 
                                           dict[str, dict[str, torch.Tensor]], 
@@ -145,6 +145,7 @@ class Dataset_Major_Depression(Dataset):
         auxi_info = path_dict["auxi_info"]
         ID = auxi_info["ID"]
         tag = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
+        to_tensor = partial(torch.tensor, dtype=torch.float32)
         # assert tag is not None, f"Unknown tag in ID: {ID}"
         processed_auxi_info = {}
         for attribute in ["Sex", "Age", "Education (years)"]:
@@ -157,28 +158,23 @@ class Dataset_Major_Depression(Dataset):
                 assert attribute in self.anxi_values.keys(), f"Attribute {attribute} not found in self.anxi_values"
                 # value = self.anxi_values[attribute]["mean"] if value == 0 else value
                 value /= self.anxi_values[attribute]["max"]
-            processed_auxi_info[attribute] = torch.tensor([value], dtype=torch.float32)
+            processed_auxi_info[attribute] = to_tensor([value])
 
         # Functional connectivity
         fc_matrices = {}
         for atlas_name, matrix in np.load(path_dict["fc"], allow_pickle=True).items():
             assert np.allclose(matrix, matrix.T), f"{atlas_name} matrix {matrix} is not symmetric"
-            # extract the upper triangular part of the matrix as a flattened array  
-            fc_embedding = matrix[self.triu_indecices[atlas_name]] 
-            fc_matrices[atlas_name] = {
-                                        "matrix" : torch.tensor(matrix, dtype=torch.float32),
-                                        "embedding" : torch.tensor(fc_embedding, dtype=torch.float32)
-                                    }
+            fc_matrices[atlas_name] = to_tensor(matrix)
 
         # VBM
         vbm_matrices = {}
         for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
             # normalize the matrix to [-1, 1]
             matrix = 2*((matrix - matrix.min()) / (matrix.max() - matrix.min())) - 1
-            vbm_matrices[group_name] = torch.tensor(matrix, dtype=torch.float32)
+            vbm_matrices[group_name] = to_tensor(matrix)
 
         # tag
-        tag = torch.tensor(tag, dtype=torch.float32)
+        tag = to_tensor(tag)
 
         return processed_auxi_info, fc_matrices, vbm_matrices, tag
 

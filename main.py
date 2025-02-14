@@ -138,7 +138,8 @@ def main() -> None:
         # exit()
 
         # Model
-        model = MGD4MD(structural_matrices_number=len(vbm_matrices)).to(device)
+        model = MGD4MD(structural_matrices_number=len(vbm_matrices),
+                       brain_network_name=None).to(device)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
         with open("model_structure.txt", "w") as f:  
