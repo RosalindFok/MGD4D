@@ -44,3 +44,29 @@ sh clear.sh # clear the log file
 conda deactivate
 conda env remove -n MGD4MD
 ```
+
+# Raw experimental results
+## baselines
+### MSGFN, 2022
+> Y. Kong et al., "Multi-Stage Graph Fusion Networks for Major Depressive Disorder Diagnosis," in IEEE Transactions on Affective Computing, vol. 13, no. 4, pp. 1917-1928, 1 Oct.-Dec. 2022, doi: 10.1109/TAFFC.2022.3205652.
+[Official Code](https://github.com/LIST-KONG/MSGFN-master)
+### HPGCN, 2022
+> H. Lin, J. Pan and Y. Dong, "Mental Disorders Prediction with Heterogeneous Graph Convolutional Network," 2022 IEEE International Conference on Systems, Man, and Cybernetics (SMC), Prague, Czech Republic, 2022, pp. 3165-3170, doi: 10.1109/SMC53654.2022.9945193. 
+No official code
+### ORC-GNN, 2024
+> Li, Y., Dong, Y., Peng, S., Gao, L., & Xin, Y. (2025). ORC-GNN: A novel open set recognition based on graph neural network for multi-class classification of psychiatric disorders. Information Fusion, 117, 102887. https://doi.org/https://doi.org/10.1016/j.inffus.2024.102887
+No official code
+### DGCN, 2024
+> Zhou, N., Yuan, Z., Zhou, H., Lyu, D., Wang, F., Wang, M., Lu, Z., Huang, Q., Chen, Y., Huang, H., Cao, T., Wu, C., Yang, W., & Hong, W. (2025). Using dynamic graph convolutional network to identify individuals with major depression disorder. Journal of Affective Disorders, 371, 188–195. https://doi.org/https://doi.org/10.1016/j.jad.2024.11.035
+No official code
+### DMGEC, 2024
+> K. -J. See et al., "Deep Multi-Graph Embedded Clustering for Community Detection in FMRI Functional Brain Networks Across Individuals," 2024 IEEE International Conference on Image Processing (ICIP), Abu Dhabi, United Arab Emirates, 2024, pp. 2996-3002, doi: 10.1109/ICIP51287.2024.10647708.
+No official code
+### MAN What can I Say, 2025
+> Dai, P., Shi, Y., Zhou, X., Xiong, T., Luo, J., Chen, Q., Liao, S., Huang, Z., & Yi, X. (2025). Identification of multimodal brain imaging biomarkers in first-episode drugs-naive major depressive disorder through a multi-site large-scale MRI consortium data. Journal of Affective Disorders, 369, 364–372. https://doi.org/https://doi.org/10.1016/j.jad.2024.10.006
+No official code
+### GNNM, 2025
+> Si, W., Wang, G., Liu, L., Zhang, L., & Qiao, L. (2025). Graph neural network with modular attention for identifying brain disorders. Biomedical Signal Processing and Control, 102, 107252. https://doi.org/https://doi.org/10.1016/j.bspc.2024.107252
+[Official Code](https://github.com/siwei9898/GNNMA)
+
+## MGD4MD

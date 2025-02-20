@@ -4,11 +4,14 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import Any
 from dataclasses import dataclass
+from collections import defaultdict
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, accuracy_score
 
-from config import Train_Config
-from models import device, MGD4MD, get_GPU_memory_usage
+from config import Train_Config, seed
+from models import device, MGD4MD, CombinedLoss, get_GPU_memory_usage
 from dataset import get_major_dataloader_via_fold
+
+torch.manual_seed(seed)
 
 def move_to_device(data: Any, device: torch.device) -> Any:  
     """Recursively moves all torch.Tensor objects in a nested structure to the specified device.  
@@ -75,19 +78,12 @@ def train(device : torch.device,
     return Train_Returns(train_loss=sum(train_loss_list)/len(train_loss_list), 
                          total_memory=total_memory, reserved_memory=max(mem_reserved_list))
 
-@dataclass
-class Test_Returns:
-    metrics: dict
-    total_memory: float
-    reserved_memory: float
-
 def test(device : torch.device,
-          model : nn.Module, 
-          dataloader : torch.utils.data.DataLoader,
-          threshold : float = 0.5,
-          is_valid : bool = False) -> Test_Returns:
+         model : nn.Module, 
+         dataloader : torch.utils.data.DataLoader,
+         threshold : float = 0.5,
+         is_valid : bool = False) -> dict[str, float]:
     model.eval()
-    mem_reserved_list = []
     tag_list = []
     prediction_list = []
     with torch.no_grad():
@@ -105,9 +101,6 @@ def test(device : torch.device,
             # metrices
             tag_list.extend(tag.cpu().numpy())
             prediction_list.extend(prediction.cpu().numpy())
-            # monitor GPU memory usage
-            total_memory, mem_reserved = get_GPU_memory_usage()
-            mem_reserved_list.append(mem_reserved)
     
     tag = np.array(tag_list).astype(int)
     prediction = np.array(prediction_list)
@@ -121,49 +114,48 @@ def test(device : torch.device,
     }
     metrices = {k : float(v) for k, v in metrices.items()}
 
-    return Test_Returns(metrics=metrices, total_memory=total_memory, reserved_memory=max(mem_reserved_list))
+    return metrices
 
 def main() -> None:
-    test_results = {}
+    test_results = defaultdict(list)
     for fold in Train_Config.n_splits:
         return_dataloaders = get_major_dataloader_via_fold(fold)
         train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
         
         # Shape
         auxi_info, fc_matrices, vbm_matrices, tag = next(iter(test_dataloader))
-        # for k, v in fc_matrices.items():
-        #     print(k, v["embedding"].max(), v["embedding"].min())
-        # for k, v in vbm_matrices.items():
-        #     print(k, v.max(), v.min())
-        # exit()
 
         # Model
-        model = MGD4MD(structural_matrices_number=len(vbm_matrices),
-                       brain_network_name=None).to(device)
+        model = MGD4MD(functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
+                       structural_matrices_number=len(vbm_matrices),
+                       embedding_dim=512).to(device)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
         with open("model_structure.txt", "w") as f:  
             f.write(str(model))
 
         # Loss
-        loss_fn = nn.BCELoss()
+        loss_fn = CombinedLoss()
 
         # Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
 
         for epoch in Train_Config.epochs:
-            print(f"Fold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
+            print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
             # Train
             train_returns = train(device=device, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader)
             print(f"Train loss: {train_returns.train_loss}, GPU memory usage: {train_returns.reserved_memory:.2f}GB / {train_returns.total_memory:.2f}GB")
             # Valid
-            test_returns = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
-            print(f"Valid GPU memory usage: {test_returns.reserved_memory:.2f}GB / {test_returns.total_memory:.2f}GB")
-            print(test_returns.metrics)
+            metrics = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
+            print(metrics)
     
     # Test
-    test_returns = test(device=device, model=model, dataloader=test_dataloader)
-    test_results[fold] = test_returns.metrics
+    print("Test")
+    metrics = test(device=device, model=model, dataloader=test_dataloader)
+    for k, v in metrics.items():
+        test_results[k].append(v)
+    for k, v in test_results.items():
+        print(f"{k}: {np.mean(v)}")
 
 if __name__ == "__main__":
     main()

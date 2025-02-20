@@ -82,6 +82,7 @@ class Bottleneck(nn.Module):
         self.conv3 = nn.Conv3d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm3d(planes * 4)
         self.relu = nn.ReLU(inplace=True)
+        # self.tanh = nn.Tanh()
         self.downsample = downsample
         self.stride = stride
         self.dilation = dilation
@@ -91,10 +92,12 @@ class Bottleneck(nn.Module):
 
         out = self.conv1(x)
         out = self.bn1(out)
+        # out = self.tanh(out)
         out = self.relu(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
+        # out = self.tanh(out)
         out = self.relu(out)
 
         out = self.conv3(out)
@@ -104,6 +107,7 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
+        # out = self.tanh(out)
         out = self.relu(out)
 
         return out
@@ -221,39 +225,37 @@ class ResNet(nn.Module):
                  block : nn.Module,
                  layers : list[int],
                  embedding_dim : int = 512,
-                 shortcut_type='B'):
-        self.inplanes = 64
+                 shortcut_type : str ='B'):
+        # self.inplanes = 64
+        self.inplanes = 4
         super(ResNet, self).__init__()
+        first_out_channels = self.inplanes
         self.conv1 = nn.Conv3d(
-            1,
-            64,
+            in_channels=1,
+            out_channels=first_out_channels,
             kernel_size=7,
             stride=(2, 2, 2),
             padding=(3, 3, 3),
             bias=False)
             
-        self.bn1 = nn.BatchNorm3d(64)
-        self.tanh = nn.Tanh()
+        self.bn1 = nn.BatchNorm3d(first_out_channels)
+        self.ReLU = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64,  layers[0], shortcut_type)
-        self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], shortcut_type, stride=1, dilation=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, stride=1, dilation=4)
+        self.layer1 = self._make_layer(block, first_out_channels,  layers[0], shortcut_type)
+        self.layer2 = self._make_layer(block, first_out_channels*4, layers[1], shortcut_type, stride=2)
+        self.layer3 = self._make_layer(block, first_out_channels*4**2, layers[2], shortcut_type, stride=1, dilation=2)
+        self.layer4 = self._make_layer(block, first_out_channels*4**3, layers[3], shortcut_type, stride=1, dilation=4)
 
         self.embedding = nn.Sequential(
-            nn.AdaptiveAvgPool3d(1),  # output: [batchsize, 512*block.expansion, 1, 1, 1]  
-            nn.Flatten(),  # output: [batchsize, 512*block.expansion]  
-            nn.Linear(512*block.expansion, embedding_dim),  # output: [batchsize, 512]  
-            self.tanh,
-            nn.BatchNorm1d(embedding_dim))
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv3d):
-                # m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')  
-            elif isinstance(m, nn.BatchNorm3d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+            nn.AdaptiveAvgPool3d(16),  # output: [batchsize, 256*block.expansion, 16, 16, 16]  
+            nn.Conv3d(first_out_channels*4**3*block.expansion, first_out_channels*4**3, kernel_size=3, stride=2, padding=1), # output: [batchsize, 256, 8, 8, 8]
+            nn.BatchNorm3d(first_out_channels*4**3),
+            self.ReLU,
+            nn.Conv3d(first_out_channels*4**3, first_out_channels*4**2, kernel_size=3, stride=2, padding=1), # output: [batchsize, 64, 4, 4, 4]
+            nn.Flatten(),  # output: [batchsize, 64*4**3]  
+            nn.Linear(first_out_channels*4**2*4**3, first_out_channels*4**2*2**3),  # output: [batchsize, 64*8]  
+            self.ReLU,
+            nn.Linear(first_out_channels*4**2*2**3, embedding_dim))  # output: [batchsize, embedding_dim]  
 
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
         downsample = None
@@ -284,7 +286,7 @@ class ResNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.tanh(x)
+        x = self.ReLU(x)
         x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
@@ -308,12 +310,12 @@ def resnet18(**kwargs):
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     return model
 
-def resnet26(**kwargs):
+def resnet26(embedding_dim : int, **kwargs):
     """Constructs a ResNet-26 model.
     26 = 1 + 2*3 + 2*3 + 2*3 + 2*3 + 1
     MGD4MD
     """
-    model = ResNet(Bottleneck, [2, 2, 2, 2], **kwargs)
+    model = ResNet(block=Bottleneck, layers=[2, 2, 2, 2], embedding_dim=embedding_dim, **kwargs)
     return model
 
 

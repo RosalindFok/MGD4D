@@ -1,10 +1,13 @@
 import json
 import torch
+import random
 import numpy as np
+import nibabel as nib
 import torch.multiprocessing
 from tqdm import tqdm
 from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
+from scipy.io import loadmat  
 from functools import partial
 from itertools import zip_longest  
 from dataclasses import dataclass
@@ -13,12 +16,41 @@ from torch.utils.data import Dataset, DataLoader
 torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "RuntimeError: unable to open shared memory object </torch_54907_2465325546_996> in read-write mode: Too many open files (24)"
 
 from path import Paths
-from config import IS_MD, Train_Config, Gender
+from plot import draw_atlas
+from config import IS_MD, Train_Config, Gender, Brain_Network, seed
+
+random.seed(seed)
 
 @dataclass
 class Return_Dataloaders:
     train: DataLoader
     test : DataLoader
+
+def load_atlas() -> dict[str, list[str]]:
+        """
+        """
+        # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
+        # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path
+        aal_mri = Paths.Atlas.AAL.mri_path
+        aal_labels = Paths.Atlas.AAL.labels_path
+        hoc_mri = Paths.Atlas.HarvardOxford.cort_mri_path
+        hoc_labels = Paths.Atlas.HarvardOxford.cort_labels_path
+        hos_mri = Paths.Atlas.HarvardOxford.sub_mri_path
+        hos_labels = Paths.Atlas.HarvardOxford.sub_labels_path
+        
+        atlas_labels_dict = {}
+        for name, mri_path, labels_path in zip(["AAL", "HOC", "HOS"], [aal_mri, hoc_mri, hos_mri], [aal_labels, hoc_labels, hos_labels]):
+            labels = loadmat(labels_path)["Reference"]
+            labels = [str(label[0][0]) for label in labels]
+            # the first one is None, which is not used in REST-meta-MDD
+            assert labels[0] == "None", f"First label is not None: {labels[0]}"
+            labels = labels[1:]
+            atlas_labels_dict[name] = {index:label for index, label in enumerate(labels)}
+            # plot atlas
+            fig_path = Paths.Fig_Dir / f"{name}.png"
+            if not fig_path.exists():
+                draw_atlas(atlas=nib.load(mri_path), saved_path=fig_path)
+        return atlas_labels_dict
 
 # class Dataset_Mild_Depression(Dataset):
 #     def __init__(self, md_path_list : list[Path], hc_path_list : list[Path]) -> None:
@@ -131,22 +163,40 @@ class Return_Dataloaders:
 
 class Dataset_Major_Depression(Dataset):
     def __init__(self, path_list : list[dict[str, Any]], 
-                       auxi_values : dict[str, dict[str, float]]) -> None:
+                       auxi_values : dict[str, dict[str, float]],
+                       brain_network_name : str) -> None:
         super().__init__()
         self.path_list = path_list
         self.anxi_values = auxi_values
+        self.brain_network_name = brain_network_name
     
-    def __getitem__(self, index) -> tuple[dict[str, torch.Tensor], 
-                                          dict[str, dict[str, torch.Tensor]], 
-                                          dict[str, torch.Tensor], 
-                                          int]:
+    def __subgraph__(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        only for fMRI
+        whole graph = whole brain = whole matrix, subgraph = a brain network = sub matrix
+        """
+        output_dict = {}
+        if self.brain_network_name == Brain_Network.DMN:
+            pass
+        elif self.brain_network_name == Brain_Network.CEN:
+            pass
+        elif self.brain_network_name == Brain_Network.SN:
+            pass
+        elif self.brain_network_name is Brain_Network.whole:
+            output_dict = input_dict
+        else:
+            raise ValueError(f"Unknown brain network name: {self.brain_network_name}")
+        return output_dict
+        
+    def __getitem__(self, index) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], 
+                                          dict[str, torch.Tensor], int]:
         path_dict = self.path_list[index]
-        # # Auxiliary information
+        # Auxiliary information
         auxi_info = path_dict["auxi_info"]
         ID = auxi_info["ID"]
         tag = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
+        assert tag is not None, f"Unknown tag in ID: {ID}"
         to_tensor = partial(torch.tensor, dtype=torch.float32)
-        # assert tag is not None, f"Unknown tag in ID: {ID}"
         processed_auxi_info = {}
         for attribute in ["Sex", "Age", "Education (years)"]:
             assert attribute in auxi_info.keys(), f"Attribute {attribute} not found in auxiliary information"
@@ -159,18 +209,20 @@ class Dataset_Major_Depression(Dataset):
                 # value = self.anxi_values[attribute]["mean"] if value == 0 else value
                 value /= self.anxi_values[attribute]["max"]
             processed_auxi_info[attribute] = to_tensor([value])
+        processed_auxi_info = self.__subgraph__(input_dict=processed_auxi_info)
 
         # Functional connectivity
         fc_matrices = {}
         for atlas_name, matrix in np.load(path_dict["fc"], allow_pickle=True).items():
             assert np.allclose(matrix, matrix.T), f"{atlas_name} matrix {matrix} is not symmetric"
+            # functional connectivity has been restricted to [-1, 1]
             fc_matrices[atlas_name] = to_tensor(matrix)
 
         # VBM
         vbm_matrices = {}
         for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
-            # normalize the matrix to [-1, 1]
-            matrix = 2*((matrix - matrix.min()) / (matrix.max() - matrix.min())) - 1
+            # clip the matrix to [0, 1]
+            matrix = np.clip(matrix, 0, 1)
             vbm_matrices[group_name] = to_tensor(matrix)
 
         # tag
@@ -234,6 +286,7 @@ class KFold_Major_Depression:
         group_1 = [item for item in subj_list if "-1-" in item]  
         group_2 = [item for item in subj_list if "-2-" in item] 
         subj_list = [item for item in sum(zip_longest(group_1, group_2), ()) if item is not None]
+        random.shuffle(subj_list) # shuffle the sites(hospitals, et.al)
         fold = 1
         for train_index, test_index in self.kf.split(subj_list):
             kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
@@ -243,8 +296,8 @@ class KFold_Major_Depression:
 
     def get_dataloader_via_fold(self, fold : int) -> tuple[DataLoader, DataLoader]:
         kfold_dir_paths = self.__k_fold__()
-        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values)
-        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values)
+        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
+        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
         train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
         test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)

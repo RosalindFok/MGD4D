@@ -1,13 +1,10 @@
 import torch
 import numpy as np
 import torch.nn as nn  
-import nibabel as nib
-from scipy.io import loadmat  
 from functools import partial
+from collections import defaultdict 
 
 import ResNet
-from path import Paths
-from plot import draw_atlas
 
 def _setup_device_() -> list[torch.device]:
     """
@@ -38,16 +35,15 @@ def get_GPU_memory_usage() -> tuple[float, float]:
         mem_reserved = torch.cuda.memory_reserved(current_device) / (1024 ** 3)    # GB  
         total_memory = torch.cuda.get_device_properties(current_device).total_memory / (1024 ** 3)  # GB  
         return total_memory, mem_reserved
-    
+
+
 class Encoder_Structure(nn.Module):
     """
     ResNet 3D: 3D structural matrices -> 1D embedding
     """
-    def __init__(self, matrices_number : int) -> None:
+    def __init__(self, matrices_number : int, embedding_dim : int) -> None:
         super().__init__()
-        self.resnets = nn.ModuleList([  
-            ResNet.resnet26() for _ in range(matrices_number)  
-        ]) 
+        self.resnets = nn.ModuleList([ResNet.resnet26(embedding_dim=embedding_dim) for _ in range(matrices_number)]) 
 
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         assert len(input_dict) == len(self.resnets), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnets)})"
@@ -56,69 +52,44 @@ class Encoder_Structure(nn.Module):
             output_dict[key] = resnet(tensor.unsqueeze(1))
         return output_dict
 
-def load_atlas() -> dict[str, list[str]]:
-        """
-        """
-        # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
-        # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path
-        aal_mri = Paths.Atlas.AAL.mri_path
-        aal_labels = Paths.Atlas.AAL.labels_path
-        hoc_mri = Paths.Atlas.HarvardOxford.cort_mri_path
-        hoc_labels = Paths.Atlas.HarvardOxford.cort_labels_path
-        hos_mri = Paths.Atlas.HarvardOxford.sub_mri_path
-        hos_labels = Paths.Atlas.HarvardOxford.sub_labels_path
-        
-        atlas_labels_dict = {}
-        for name, mri_path, labels_path in zip(["AAL", "HOC", "HOS"], [aal_mri, hoc_mri, hos_mri], [aal_labels, hoc_labels, hos_labels]):
-            labels = loadmat(labels_path)["Reference"]
-            labels = [str(label[0][0]) for label in labels]
-            # the first one is None, which is not used in REST-meta-MDD
-            assert labels[0] == "None", f"First label is not None: {labels[0]}"
-            labels = labels[1:]
-            atlas_labels_dict[name] = {index:label for index, label in enumerate(labels)}
-            # plot atlas
-            fig_path = Paths.Fig_Dir / f"{name}.png"
-            if not fig_path.exists():
-                draw_atlas(atlas=nib.load(mri_path), saved_path=fig_path)
-        return atlas_labels_dict
 
 class Encoder_Functional(nn.Module):
     """
     
     """
-    def __init__(self, brain_network_name : str) -> None:
+    def __init__(self, functional_embeddings_shape : dict[str, int], target_dim : int) -> None:
         super().__init__()
-        self.atlas_labels_dict = load_atlas()
-        self.brain_network_name = brain_network_name
-    
-    def subgraph(self, input_dict : dict[str, torch.Tensor]) -> None:
+        self.projectors = nn.ModuleDict({
+            k: self.__make_projector__(input_dim=v, output_dim=target_dim) for k, v in functional_embeddings_shape.items()
+        })
+
+    def __get_triu__(self, tensor : torch.Tensor) -> torch.Tensor:
         """
-        whole graph = whole brain = whole matrix, subgraph = a brain network = sub matrix
         extract the strict upper triangular matrix as embedding
+        then project to the same dimension of structural embedding
         """
-        def __get_triu__(tensor : torch.Tensor):
-            assert tensor.dim() == 3, f"Tensor must be 3-dimensional, but got {tensor.dim()}-dimensional tensor"
-            _, matrix_size, _ = tensor.shape
-            mask = torch.triu(torch.ones(matrix_size, matrix_size, device=tensor.device), diagonal=1).bool()
-            return tensor[:, mask]
-        
-        output_dict = {}
-        if self.brain_network_name == "DMN":
-            # TODO 先提取子矩阵出来
-            pass
-        elif self.brain_network_name == "CEN":
-            pass
-        elif self.brain_network_name == "SN":
-            pass
-        elif self.brain_network_name is None:
-            output_dict = {key:__get_triu__(tensor) for key, tensor in input_dict.items()}
+        assert tensor.dim() == 3, f"Tensor must be 3-dimensional, but got {tensor.dim()}-dimensional tensor"
+        _, matrix_size, _ = tensor.shape
+        mask = torch.triu(torch.ones(matrix_size, matrix_size, device=tensor.device), diagonal=1).bool()
+        return tensor[:, mask]
+    
+    def __make_projector__(self, input_dim : int, output_dim : int) -> nn.Module:
+        if input_dim > output_dim:
+            return nn.Sequential(
+                nn.Linear(input_dim, 2048),
+                nn.Tanh(),
+                nn.Linear(2048, output_dim) 
+            )
+        elif input_dim == output_dim:
+            return nn.Identity()
         else:
-            raise ValueError(f"Unknown brain network name: {self.brain_network_name}")
+            return nn.Linear(input_dim, output_dim)
+    
+    def forward(self, input_dict : dict[str, torch.Tensor]) -> torch.Tensor:
+        output_dict = {k:self.__get_triu__(v) for k, v in input_dict.items()}
+        output_dict = {k:self.projectors[k](v) for k, v in output_dict.items()}
         return output_dict
 
-    def forward(self, input_dict : dict[str, torch.Tensor]) -> torch.Tensor:
-        output_dict = self.subgraph(input_dict=input_dict)
-        return output_dict
 
 class Encoder_Information(nn.Module):
     """
@@ -129,22 +100,33 @@ class Encoder_Information(nn.Module):
 
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {'+'.join(list(input_dict.keys())) : torch.cat(list(input_dict.values()), dim=1)}
-    
+
+
 class LatentGraphDiffusion(nn.Module):
-    def __init__(self, num_timesteps : int = 1000,
-                       ) -> None:
+    def __init__(self, embedding_dim : int, features_number : int, num_timesteps : int = 1000) -> None:
         super().__init__()
         self.num_timesteps = num_timesteps
+        self.features_number = features_number
         betas = self.__make_beta_schedule__(schedule="linear", num_timesteps=num_timesteps)
         alphas = 1. - betas
         alphas_cumprod = np.cumprod(alphas, axis=0)
         to_torch = partial(torch.tensor, dtype=torch.float32)
-        # Cumulative Noise Decay Factor
+        # cumulative Noise Decay Factor
         self.register_buffer('sqrt_alphas_cumprod', to_torch(np.sqrt(alphas_cumprod)))
         # Cumulative Noise Growth Factor
         self.register_buffer('sqrt_one_minus_alphas_cumprod', to_torch(np.sqrt(1. - alphas_cumprod)))
 
-    def __make_beta_schedule__(self, schedule : str, num_timesteps : int, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3):  
+        # cross attention
+        self.cross_attention = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=8, batch_first=True)
+        
+        # score
+        self.contribution_mlps  = nn.ModuleList([nn.Sequential( # TODO 一会儿简单点？去噪可能不对，看那个论文试试
+                                                 nn.Linear(embedding_dim, 64),
+                                                 nn.ReLU(inplace=True),
+                                                 nn.Linear(64, 1),
+                                                 nn.Sigmoid()) for _ in range(features_number)])
+
+    def __make_beta_schedule__(self, schedule : str, num_timesteps : int, linear_start=1e-4, linear_end=2e-2, cosine_s=8e-3) -> np.ndarray:  
         """  
         Creates a beta schedule for the diffusion process based on the specified schedule type.  
 
@@ -255,65 +237,133 @@ class LatentGraphDiffusion(nn.Module):
         x_t = self.__extract_into_tensor__(a=self.sqrt_alphas_cumprod, t=t, x_shape=x_0.shape) * x_0 + self.__extract_into_tensor__(a=self.sqrt_one_minus_alphas_cumprod, t=t, x_shape=x_0.shape) * noise
         return x_t
     
-    def reverse_chain(self, ) -> None:
+    def reverse_chain(self, noisy_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
         """
         reverse chain: converts noise back to data, which is called `p_sample` in `DDPM`
         """
-        return
+        stacked_keys_list, stacked_embeddings_list = [], []
+        for group in ["functional", "structural"]:
+            for key, embedding in noisy_embeddings_dict[group].items():
+                stacked_keys_list.append((group, key))
+                stacked_embeddings_list.append(embedding)
 
-    def forward(self, *embedding_dicts : dict[str, torch.Tensor]) -> torch.Tensor:
-        tensor = next(iter(embedding_dicts[0].values()))  
+        stacked_features = torch.stack(stacked_embeddings_list, dim=0)
+        stacked_features = stacked_features.permute(1, 0, 2) # shape is [batchsize, features number, embedding_dim]
+
+        # Cross Attention
+        # attended_features.shape is [batchsize, features number, embedding_dim]
+        # attention_weights.shape is [batchsize, features number, features number]
+        attended_features, attention_weights = self.cross_attention(query=stacked_features, 
+                                                                    key=stacked_features, 
+                                                                    value=stacked_features) 
+        attended_embeddings_dict = {}
+        for i, combined_key in enumerate(stacked_keys_list): # combined_key = (group, key)
+            attended_embeddings_dict[combined_key] = attended_features[:, i, :]
+        assert len(attended_embeddings_dict) == self.features_number, f"number of attended embeddings = {len(attended_embeddings_dict)} is not equal to features number = {self.features_number}"
+        
+        # Score
+        scores_dict = defaultdict(dict)
+        for i, (group, key) in enumerate(attended_embeddings_dict.keys()):
+            score = self.contribution_mlps[i](attended_embeddings_dict[(group, key)])
+            scores_dict[group][key] = score
+        
+        # Weighted
+        weighted_embeddings_dict = defaultdict(dict)
+        for (group, key), embedding in attended_embeddings_dict.items():
+            weighted_embeddings_dict[group][key] = embedding * scores_dict[group][key]
+        
+        return weighted_embeddings_dict # TODO scores_dict and attention_weights
+
+    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
+        tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))
         # t: time steps in the diffusion process
         t = torch.randint(0, self.num_timesteps, (tensor.shape[0],), device=tensor.device).long()
-        for embedding_dict in embedding_dicts:
-            for key, tensor in embedding_dict.items():
-                x_0 = tensor.clone().detach()
+        noisy_embeddings_dict = {}
+        for modal, embeddings_dict in latent_embeddings_dict.items():
+            noisy_embeddings_dict[modal] = {}
+            for key, x_0 in embeddings_dict.items():
                 noise = torch.randn_like(x_0)
-                # forward chain
+                # forward chaimn
                 x_t = self.forward_chain(x_0=x_0, t=t, noise=noise)
+                noisy_embeddings_dict[modal][key] = x_t
         
         # reverse chain
-        
-        # global pool: max, add, mean
+        output_embeddings_dict = self.reverse_chain(noisy_embeddings_dict=noisy_embeddings_dict)
 
-        return None
+        return output_embeddings_dict
 
 class Decoder(nn.Module):
-    def __init__(self, ) -> None:
+    def __init__(self, features_number : int) -> None:
         super().__init__()
-        # prediction
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels=features_number, out_channels=4, kernel_size=3**3),
+            nn.Tanh(),
+            nn.Conv1d(in_channels=4, out_channels=2, kernel_size=3**3),
+            nn.Tanh(),
+        )
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(256)
+        self.fc = nn.Linear(in_features=2*256, out_features=1)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        return input_dict
+    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]], 
+                information_embedding_dict : dict[str, torch.Tensor]) -> torch.Tensor:
+        concatenated_embeddings_list = []
+        information_embedding = list(information_embedding_dict.values())
+        assert len(information_embedding) == 1 #
+        information_embedding = information_embedding[0]
+        for group, features in latent_embeddings_dict.items():
+            for key, embedding in features.items():
+                concatenated_embeddings_list.append(torch.cat((embedding, information_embedding), dim=1))
+        embeddings = torch.stack(concatenated_embeddings_list, dim=1)
+        embeddings = self.conv(embeddings)
+        embeddings = self.adaptive_pool(embeddings)
+        embeddings = embeddings.view(embeddings.shape[0], -1)
+        fc_out = self.fc(embeddings)
+        prediction = self.sigmoid(fc_out)
+        return prediction
     
 class MGD4MD(nn.Module):
-    def __init__(self,  structural_matrices_number : int,
-                        brain_network_name : str,
-                ) -> None:
+    def __init__(self, structural_matrices_number : int,
+                 functional_embeddings_shape : dict[str, int], 
+                 embedding_dim : int = 512) -> None:
         super().__init__()
         # Encoders
-        self.encoder_s = Encoder_Structure(matrices_number=structural_matrices_number)
-        self.encoder_f = Encoder_Functional(brain_network_name=brain_network_name)
+        self.encoder_s = Encoder_Structure(matrices_number=structural_matrices_number, embedding_dim=embedding_dim)
+        self.encoder_f = Encoder_Functional(functional_embeddings_shape=functional_embeddings_shape, target_dim=embedding_dim)
         self.encoder_i = Encoder_Information()
 
         # LatentGraphDiffusion
-        self.lgd = LatentGraphDiffusion()
+        self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, features_number=structural_matrices_number+len(functional_embeddings_shape))
 
         # Decoder
-        self.decoder = Decoder()
+        self.decoder = Decoder(features_number=structural_matrices_number+len(functional_embeddings_shape))
 
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
-                      functional_input_dict : dict[str, torch.Tensor],
+                      functional_input_dict : dict[str, torch.Tensor], 
                       information_input_dict: dict[str, torch.Tensor]) -> torch.Tensor:
         # encode
-        structural_embedding_dict = self.encoder_s(structural_input_dict) 
-        functional_embedding_dict = self.encoder_f(functional_input_dict)
+        structural_embeddings_dict = self.encoder_s(structural_input_dict) 
+        functional_embeddings_dict = self.encoder_f(functional_input_dict)
         information_embedding_dict = self.encoder_i(information_input_dict) 
         
         # latent graph diffusion
-        p = self.lgd(structural_embedding_dict, functional_embedding_dict, information_embedding_dict)
-        
+        latent_embeddings_dict = {"structural"  : structural_embeddings_dict, 
+                                 "functional"   : functional_embeddings_dict}
+        latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
+      
         # decode
-        p = self.decoder(p)
-        return p
+        prediction = self.decoder(latent_embeddings_dict, information_embedding_dict)
+
+        return prediction
+
+class CombinedLoss(nn.modules.loss._Loss):
+    def __init__(self, w_mse : float = 1.0, w_bce : float = 1.0) -> None:
+        super().__init__()
+        self.w_mse = w_mse
+        self.w_bce = w_bce
+        self.mse = nn.MSELoss()
+        self.bce = nn.BCELoss()
+    
+    def forward(self, pred : torch.Tensor, true : torch.Tensor) -> torch.Tensor:
+        assert pred.shape == true.shape, f"Prediction shape = {pred.shape} and true shape = {true.shape} must be equal"
+        return self.w_mse * self.mse(pred, true) + self.w_bce * self.bce(pred, true)

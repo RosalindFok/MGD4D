@@ -265,9 +265,6 @@ def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
         # TODO sub01361 有明显异常，需要检查
             
 
-# def read_adjacent_matrix_of_brainnetome_atlas(file_path : Path = Paths.Atlas.Brainnetome.BNA_adjacent_matrix_path) -> np.array:
-    # return pd.read_csv(file_path, header=None).values # shape = (246, 246)
-
 def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_path,
                           saved_root_dir_path : Path  = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
     # Auxiliary information
@@ -340,7 +337,7 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                 if not fc_matrices_path.exists():
                     fc_matrices = {}
                     for atlas_name, time_series in time_series_pair.items():
-                        matrix = connectome.ConnectivityMeasure(kind='correlation', standardize='zscore_sample').fit_transform([time_series])[0] 
+                        matrix = connectome.ConnectivityMeasure(kind='correlation', standardize=True).fit_transform([time_series])[0] 
                         np.fill_diagonal(matrix, 0) # set the diagonal to 0 (1 -> 0)
                         plot_heap_map(matrix=matrix, saved_dir_path=saved_dir_path, fig_name=f"{atlas_name}_fc_matrix.svg")
                         fc_matrices[atlas_name] = matrix
@@ -380,7 +377,6 @@ def main() -> None:
     # TODO
     # process_Cambridge()
     process_rest_meta_mdd()
-    # adjacent_matrix = read_adjacent_matrix_of_brainnetome_atlas()
 
 if __name__ == "__main__":
     main()
