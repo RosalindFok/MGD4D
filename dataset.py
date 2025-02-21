@@ -1,6 +1,5 @@
 import json
 import torch
-import random
 import numpy as np
 import nibabel as nib
 import torch.multiprocessing
@@ -9,8 +8,8 @@ from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
 from scipy.io import loadmat  
 from functools import partial
-from itertools import zip_longest  
 from dataclasses import dataclass
+from collections import defaultdict
 from sklearn.model_selection import KFold
 from torch.utils.data import Dataset, DataLoader
 torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "RuntimeError: unable to open shared memory object </torch_54907_2465325546_996> in read-write mode: Too many open files (24)"
@@ -18,8 +17,6 @@ torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "Runtim
 from path import Paths
 from plot import draw_atlas
 from config import IS_MD, Train_Config, Gender, Brain_Network, seed
-
-random.seed(seed)
 
 @dataclass
 class Return_Dataloaders:
@@ -278,11 +275,31 @@ class KFold_Major_Depression:
             self.paths_dict[key]["vbm"] = vbm_path_dict[key]
 
         # K Fold
-        self.kf = KFold(n_splits=max(train_config.n_splits), shuffle=train_config.shuffle)
+        self.kf = KFold(n_splits=train_config.n_splits.stop-1, shuffle=train_config.shuffle)
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
+        # REST-meta-MDD: "SiteID-Tag-SubjectID"
         subj_list = list(self.paths_dict.keys())
+        # subj_dict = {}  
+        # for subj in subj_list:  
+        #     splits = subj.split("-")  
+        #     subj_dict.setdefault(splits[0], {}).setdefault(splits[1], []).append(subj)  
+        # train_dict, test_dict = defaultdict(list), defaultdict(list)
+        # for _, value in subj_dict.items():
+        #     for _, subjs in value.items():
+        #         fold = 1
+        #         for train_index, test_index in self.kf.split(subjs):
+        #             train_dict[fold].extend([self.paths_dict[subjs[i]] for i in train_index])
+        #             test_dict[fold].extend([self.paths_dict[subjs[i]]  for i in test_index])
+        #             fold += 1
+        # for fold in self.train_config.n_splits:
+        #     assert fold in train_dict.keys() and fold in test_dict.keys(), f"Unknown fold: {fold}"
+        #     kfold_dir_paths[fold] = {"train" : train_dict[fold], 
+        #                              "test"  : test_dict[fold]}
+        import random
+        random.seed(seed)
+        from itertools import zip_longest  
         group_1 = [item for item in subj_list if "-1-" in item]  
         group_2 = [item for item in subj_list if "-2-" in item] 
         subj_list = [item for item in sum(zip_longest(group_1, group_2), ()) if item is not None]
@@ -303,6 +320,5 @@ class KFold_Major_Depression:
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
         return return_dataloaders
 
-    
+# global is better than not    
 get_major_dataloader_via_fold = KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold
-

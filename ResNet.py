@@ -76,13 +76,11 @@ class Bottleneck(nn.Module):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv3d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm3d(planes)
-        self.conv2 = nn.Conv3d(
-            planes, planes, kernel_size=3, stride=stride, dilation=dilation, padding=dilation, bias=False)
+        self.conv2 = nn.Conv3d(planes, planes, kernel_size=3, stride=stride, dilation=dilation, padding=dilation, bias=False)
         self.bn2 = nn.BatchNorm3d(planes)
         self.conv3 = nn.Conv3d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm3d(planes * 4)
         self.relu = nn.ReLU(inplace=True)
-        # self.tanh = nn.Tanh()
         self.downsample = downsample
         self.stride = stride
         self.dilation = dilation
@@ -92,12 +90,10 @@ class Bottleneck(nn.Module):
 
         out = self.conv1(x)
         out = self.bn1(out)
-        # out = self.tanh(out)
         out = self.relu(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
-        # out = self.tanh(out)
         out = self.relu(out)
 
         out = self.conv3(out)
@@ -107,7 +103,6 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        # out = self.tanh(out)
         out = self.relu(out)
 
         return out
@@ -224,7 +219,7 @@ class ResNet(nn.Module):
     def __init__(self,
                  block : nn.Module,
                  layers : list[int],
-                 embedding_dim : int = 512,
+                 embedding_dim : int,
                  shortcut_type : str ='B'):
         # self.inplanes = 64
         self.inplanes = 4
@@ -255,7 +250,8 @@ class ResNet(nn.Module):
             nn.Flatten(),  # output: [batchsize, 64*4**3]  
             nn.Linear(first_out_channels*4**2*4**3, first_out_channels*4**2*2**3),  # output: [batchsize, 64*8]  
             self.ReLU,
-            nn.Linear(first_out_channels*4**2*2**3, embedding_dim))  # output: [batchsize, embedding_dim]  
+            nn.Linear(first_out_channels*4**2*2**3, embedding_dim)
+        )  
 
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
         downsample = None
@@ -315,6 +311,7 @@ def resnet26(embedding_dim : int, **kwargs):
     26 = 1 + 2*3 + 2*3 + 2*3 + 2*3 + 1
     MGD4MD
     """
+    # model = ResNet(block=BasicBlock, layers=[2, 2, 2, 2], embedding_dim=embedding_dim, **kwargs)
     model = ResNet(block=Bottleneck, layers=[2, 2, 2, 2], embedding_dim=embedding_dim, **kwargs)
     return model
 

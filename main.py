@@ -1,3 +1,4 @@
+import json
 import torch
 import numpy as np
 import torch.nn as nn
@@ -5,6 +6,7 @@ from tqdm import tqdm
 from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
+from torch.optim import lr_scheduler
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, accuracy_score
 
 from config import Train_Config, seed
@@ -12,6 +14,7 @@ from models import device, MGD4MD, CombinedLoss, get_GPU_memory_usage
 from dataset import get_major_dataloader_via_fold
 
 torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)  
 
 def move_to_device(data: Any, device: torch.device) -> Any:  
     """Recursively moves all torch.Tensor objects in a nested structure to the specified device.  
@@ -141,6 +144,8 @@ def main() -> None:
         optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
 
         for epoch in Train_Config.epochs:
+            scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
             print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
             # Train
             train_returns = train(device=device, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader)
@@ -148,14 +153,22 @@ def main() -> None:
             # Valid
             metrics = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
             print(metrics)
+
+            scheduler.step()
     
-    # Test
-    print("Test")
-    metrics = test(device=device, model=model, dataloader=test_dataloader)
-    for k, v in metrics.items():
-        test_results[k].append(v)
-    for k, v in test_results.items():
-        print(f"{k}: {np.mean(v)}")
+        # Test
+        print("Test")
+        metrics = test(device=device, model=model, dataloader=test_dataloader)
+        for k, v in metrics.items():
+            test_results[k].append(v)
+
+    # Write all results
+    results = defaultdict(dict)
+    for key, values in test_results.items():
+        assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
+        results[key] ={"fold" : values, "mean" : np.mean(values)}
+    with open("test_results.txt", "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)  
 
 if __name__ == "__main__":
     main()

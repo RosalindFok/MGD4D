@@ -23,8 +23,8 @@ class Train_Config:
     shuffle: bool = False
     batch_size: int = 24
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(100)
-    lr: float = 1e-4
+    epochs: range = range(30)
+    lr: float = 1e-5
     
 # Brain network
 @dataclass(frozen=True)

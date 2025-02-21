@@ -44,6 +44,16 @@ class Encoder_Structure(nn.Module):
     def __init__(self, matrices_number : int, embedding_dim : int) -> None:
         super().__init__()
         self.resnets = nn.ModuleList([ResNet.resnet26(embedding_dim=embedding_dim) for _ in range(matrices_number)]) 
+        # self.embedding = nn.Sequential(
+        #     nn.Conv3d(in_channels=1, out_channels=4, kernel_size=3),
+        #     nn.ReLU(),
+        #     nn.Conv3d(in_channels=4, out_channels=1, kernel_size=3),
+        #     nn.ReLU(),
+        #     nn.AdaptiveMaxPool3d(64),
+        #     nn.Flatten(),
+        #     nn.Linear(64**3, embedding_dim)
+        # )
+        # self.resnets = nn.ModuleList([self.embedding for _ in range(matrices_number)])
 
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         assert len(input_dict) == len(self.resnets), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnets)})"
@@ -77,6 +87,7 @@ class Encoder_Functional(nn.Module):
         if input_dim > output_dim:
             return nn.Sequential(
                 nn.Linear(input_dim, 2048),
+                # nn.CELU(),
                 nn.Tanh(),
                 nn.Linear(2048, output_dim) 
             )
@@ -295,15 +306,19 @@ class LatentGraphDiffusion(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, features_number : int) -> None:
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(in_channels=features_number, out_channels=4, kernel_size=3**3),
+        self.decode = nn.Sequential(
+            nn.Conv1d(in_channels=features_number, out_channels=features_number, kernel_size=3**3),
+            nn.AdaptiveAvgPool1d(256),
+            nn.Flatten(),
+            nn.Linear(in_features=features_number*256, out_features=512),
+            # nn.CELU(),
             nn.Tanh(),
-            nn.Conv1d(in_channels=4, out_channels=2, kernel_size=3**3),
+            nn.Linear(in_features=512, out_features=64),
+            # nn.CELU(),
             nn.Tanh(),
+            nn.Linear(in_features=64, out_features=1),
+            nn.Sigmoid()
         )
-        self.adaptive_pool = nn.AdaptiveAvgPool1d(256)
-        self.fc = nn.Linear(in_features=2*256, out_features=1)
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]], 
                 information_embedding_dict : dict[str, torch.Tensor]) -> torch.Tensor:
@@ -314,12 +329,8 @@ class Decoder(nn.Module):
         for group, features in latent_embeddings_dict.items():
             for key, embedding in features.items():
                 concatenated_embeddings_list.append(torch.cat((embedding, information_embedding), dim=1))
-        embeddings = torch.stack(concatenated_embeddings_list, dim=1)
-        embeddings = self.conv(embeddings)
-        embeddings = self.adaptive_pool(embeddings)
-        embeddings = embeddings.view(embeddings.shape[0], -1)
-        fc_out = self.fc(embeddings)
-        prediction = self.sigmoid(fc_out)
+        embeddings = torch.stack(concatenated_embeddings_list, dim=1) # shape=[batchsize, features_number, embedding_dim+information_dim]
+        prediction = self.decode(embeddings)
         return prediction
     
 class MGD4MD(nn.Module):
