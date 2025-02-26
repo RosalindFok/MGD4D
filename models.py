@@ -36,24 +36,13 @@ def get_GPU_memory_usage() -> tuple[float, float]:
         total_memory = torch.cuda.get_device_properties(current_device).total_memory / (1024 ** 3)  # GB  
         return total_memory, mem_reserved
 
-
 class Encoder_Structure(nn.Module):
     """
     ResNet 3D: 3D structural matrices -> 1D embedding
     """
     def __init__(self, matrices_number : int, embedding_dim : int) -> None:
         super().__init__()
-        self.resnets = nn.ModuleList([ResNet.resnet26(embedding_dim=embedding_dim) for _ in range(matrices_number)]) 
-        # self.embedding = nn.Sequential(
-        #     nn.Conv3d(in_channels=1, out_channels=4, kernel_size=3),
-        #     nn.ReLU(),
-        #     nn.Conv3d(in_channels=4, out_channels=1, kernel_size=3),
-        #     nn.ReLU(),
-        #     nn.AdaptiveMaxPool3d(64),
-        #     nn.Flatten(),
-        #     nn.Linear(64**3, embedding_dim)
-        # )
-        # self.resnets = nn.ModuleList([self.embedding for _ in range(matrices_number)])
+        self.resnets = nn.ModuleList([ResNet.ResNet3D(embedding_dim=embedding_dim) for _ in range(matrices_number)]) 
 
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         assert len(input_dict) == len(self.resnets), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnets)})"
@@ -65,7 +54,7 @@ class Encoder_Structure(nn.Module):
 
 class Encoder_Functional(nn.Module):
     """
-    
+    Embedding Layer + Project Layer: 2D functional matrices -> 1D embedding
     """
     def __init__(self, functional_embeddings_shape : dict[str, int], target_dim : int) -> None:
         super().__init__()
@@ -76,7 +65,6 @@ class Encoder_Functional(nn.Module):
     def __get_triu__(self, tensor : torch.Tensor) -> torch.Tensor:
         """
         extract the strict upper triangular matrix as embedding
-        then project to the same dimension of structural embedding
         """
         assert tensor.dim() == 3, f"Tensor must be 3-dimensional, but got {tensor.dim()}-dimensional tensor"
         _, matrix_size, _ = tensor.shape
@@ -84,10 +72,12 @@ class Encoder_Functional(nn.Module):
         return tensor[:, mask]
     
     def __make_projector__(self, input_dim : int, output_dim : int) -> nn.Module:
+        """
+        project to the same dimension of structural embedding
+        """
         if input_dim > output_dim:
             return nn.Sequential(
                 nn.Linear(input_dim, 2048),
-                # nn.CELU(),
                 nn.Tanh(),
                 nn.Linear(2048, output_dim) 
             )
@@ -133,7 +123,7 @@ class LatentGraphDiffusion(nn.Module):
         # score
         self.contribution_mlps  = nn.ModuleList([nn.Sequential( # TODO 一会儿简单点？去噪可能不对，看那个论文试试
                                                  nn.Linear(embedding_dim, 64),
-                                                 nn.ReLU(inplace=True),
+                                                 nn.ReLU(),
                                                  nn.Linear(64, 1),
                                                  nn.Sigmoid()) for _ in range(features_number)])
 
@@ -304,20 +294,28 @@ class LatentGraphDiffusion(nn.Module):
         return output_embeddings_dict
 
 class Decoder(nn.Module):
-    def __init__(self, features_number : int) -> None:
+    def __init__(self, auxi_info_number : int, features_number : int, embedding_dim : int, use_auxiliary_information : bool = True) -> None:
         super().__init__()
-        self.decode = nn.Sequential(
-            nn.Conv1d(in_channels=features_number, out_channels=features_number, kernel_size=3**3),
-            nn.AdaptiveAvgPool1d(256),
+        self.use = use_auxiliary_information
+        self.tanh = nn.Tanh()
+        auxi_info_number = auxi_info_number if self.use else 0
+        # # TODO 方案 1
+        # self.decode_1 = nn.Sequential(
+        #     nn.Conv1d(in_channels=features_number, out_channels=1, kernel_size=3, stride=1, padding=1),
+        #     nn.Flatten(),
+        #     self.tanh
+        # )
+        # TODO 方案 2
+        self.decode_1 = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(in_features=features_number*256, out_features=512),
-            # nn.CELU(),
-            nn.Tanh(),
-            nn.Linear(in_features=512, out_features=64),
-            # nn.CELU(),
-            nn.Tanh(),
-            nn.Linear(in_features=64, out_features=1),
-            nn.Sigmoid()
+            nn.Linear(in_features=features_number*embedding_dim, out_features=embedding_dim),
+            self.tanh,
+        )
+        self.decode_2 = nn.Sequential(
+            nn.Linear(in_features=embedding_dim+auxi_info_number, out_features=64),
+            self.tanh, 
+            nn.Linear(in_features=64, out_features=2),
+            nn.Softmax(dim=-1)
         )
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]], 
@@ -326,17 +324,21 @@ class Decoder(nn.Module):
         information_embedding = list(information_embedding_dict.values())
         assert len(information_embedding) == 1 #
         information_embedding = information_embedding[0]
-        for group, features in latent_embeddings_dict.items():
-            for key, embedding in features.items():
-                concatenated_embeddings_list.append(torch.cat((embedding, information_embedding), dim=1))
-        embeddings = torch.stack(concatenated_embeddings_list, dim=1) # shape=[batchsize, features_number, embedding_dim+information_dim]
-        prediction = self.decode(embeddings)
-        return prediction
+
+        for _, features in latent_embeddings_dict.items():
+            for _, tensor in features.items():
+                concatenated_embeddings_list.append(tensor)
+        embeddings = torch.stack(concatenated_embeddings_list, dim=1) # shape=[batchsize, features_number, embedding_dim]
+        embeddings = self.decode_1(embeddings)
+        if self.use:
+            embeddings = torch.cat((embeddings, information_embedding), dim=1)
+        output = self.decode_2(embeddings)
+
+        return output
     
 class MGD4MD(nn.Module):
-    def __init__(self, structural_matrices_number : int,
-                 functional_embeddings_shape : dict[str, int], 
-                 embedding_dim : int = 512) -> None:
+    def __init__(self, auxi_info_number : int, structural_matrices_number : int,
+                 functional_embeddings_shape : dict[str, int], embedding_dim : int = 512) -> None:
         super().__init__()
         # Encoders
         self.encoder_s = Encoder_Structure(matrices_number=structural_matrices_number, embedding_dim=embedding_dim)
@@ -344,10 +346,13 @@ class MGD4MD(nn.Module):
         self.encoder_i = Encoder_Information()
 
         # LatentGraphDiffusion
-        self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, features_number=structural_matrices_number+len(functional_embeddings_shape))
+        self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, 
+                                        features_number=structural_matrices_number+len(functional_embeddings_shape))
 
         # Decoder
-        self.decoder = Decoder(features_number=structural_matrices_number+len(functional_embeddings_shape))
+        self.decoder = Decoder(auxi_info_number=auxi_info_number, 
+                               features_number=structural_matrices_number+len(functional_embeddings_shape),
+                               embedding_dim=embedding_dim)
 
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
                       functional_input_dict : dict[str, torch.Tensor], 
@@ -363,18 +368,7 @@ class MGD4MD(nn.Module):
         latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
       
         # decode
-        prediction = self.decoder(latent_embeddings_dict, information_embedding_dict)
+        output = self.decoder(latent_embeddings_dict, information_embedding_dict)
 
-        return prediction
+        return output
 
-class CombinedLoss(nn.modules.loss._Loss):
-    def __init__(self, w_mse : float = 1.0, w_bce : float = 1.0) -> None:
-        super().__init__()
-        self.w_mse = w_mse
-        self.w_bce = w_bce
-        self.mse = nn.MSELoss()
-        self.bce = nn.BCELoss()
-    
-    def forward(self, pred : torch.Tensor, true : torch.Tensor) -> torch.Tensor:
-        assert pred.shape == true.shape, f"Prediction shape = {pred.shape} and true shape = {true.shape} must be equal"
-        return self.w_mse * self.mse(pred, true) + self.w_bce * self.bce(pred, true)

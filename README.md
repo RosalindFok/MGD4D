@@ -29,15 +29,17 @@ module load miniforge # N32EA14P
 conda create --name MGD4MD python=3.11
 source activate MGD4MD
 
-# dependencies
+# dependencies for MGD4MD
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 # Successfully installed MarkupSafe-2.1.5 filelock-3.13.1 fsspec-2024.6.1 jinja2-3.1.4 mpmath-1.3.0 networkx-3.3 numpy-2.1.2 nvidia-cublas-cu12-12.1.3.1 nvidia-cuda-cupti-cu12-12.1.105 nvidia-cuda-nvrtc-cu12-12.1.105 nvidia-cuda-runtime-cu12-12.1.105 nvidia-cudnn-cu12-9.1.0.70 nvidia-cufft-cu12-11.0.2.54 nvidia-curand-cu12-10.3.2.106 nvidia-cusolver-cu12-11.4.5.107 nvidia-cusparse-cu12-12.1.0.106 nvidia-nccl-cu12-2.21.5 nvidia-nvjitlink-cu12-12.1.105 nvidia-nvtx-cu12-12.1.105 pillow-11.0.0 sympy-1.13.1 torch-2.5.1+cu121 torchaudio-2.5.1+cu121 torchvision-0.20.1+cu121 triton-3.1.0 typing-extensions-4.12.2
 pip install nilearn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed certifi-2025.1.31 charset-normalizer-3.4.1 idna-3.10 importlib-resources-6.5.2 joblib-1.4.2 lxml-5.3.0 nibabel-5.3.2 nilearn-0.11.1 packaging-24.2 pandas-2.2.3 python-dateutil-2.9.0.post0 pytz-2025.1 requests-2.32.3 scikit-learn-1.6.1 scipy-1.15.1 six-1.17.0 threadpoolctl-3.5.0 tzdata-2025.1 urllib3-2.3.0
 pip install tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed tqdm-4.67.1
 pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed contourpy-1.3.1 cycler-0.12.1 fonttools-4.55.8 kiwisolver-1.4.8 matplotlib-3.10.0 pyparsing-3.2.1
 
+
 # script
 chmod 777 *.sh
-sbatch --gpus=1 -p gpu run.sh # submit the job
+sbatch --gpus=1 -p gpu run_MGD4MD.sh # submit the job, MGD4MD
+sbatch --gpus=1 -p gpu run_baselines.sh # submit the job, baselines
 parajobs # check id of the job
 scancel job_id # cancel the job via its id
 sh clear.sh # clear the log file
@@ -48,16 +50,6 @@ conda env remove -n MGD4MD
 
 # Raw experimental results
 ## baselines
-### MSGFN, 2022
-> Y. Kong et al., "Multi-Stage Graph Fusion Networks for Major Depressive Disorder Diagnosis," in IEEE Transactions on Affective Computing, vol. 13, no. 4, pp. 1917-1928, 1 Oct.-Dec. 2022, doi: 10.1109/TAFFC.2022.3205652.
-
-[Official Code](https://github.com/LIST-KONG/MSGFN-master)
-
-### HPGCN, 2022
-> H. Lin, J. Pan and Y. Dong, "Mental Disorders Prediction with Heterogeneous Graph Convolutional Network," 2022 IEEE International Conference on Systems, Man, and Cybernetics (SMC), Prague, Czech Republic, 2022, pp. 3165-3170, doi: 10.1109/SMC53654.2022.9945193. 
-
-No official code
-
 ### ORC-GNN, 2024
 > Li, Y., Dong, Y., Peng, S., Gao, L., & Xin, Y. (2025). ORC-GNN: A novel open set recognition based on graph neural network for multi-class classification of psychiatric disorders. Information Fusion, 117, 102887. https://doi.org/https://doi.org/10.1016/j.inffus.2024.102887 
 
@@ -68,19 +60,19 @@ No official code
 
 No official code
 
-### DMGEC, 2024
-> K. -J. See et al., "Deep Multi-Graph Embedded Clustering for Community Detection in FMRI Functional Brain Networks Across Individuals," 2024 IEEE International Conference on Image Processing (ICIP), Abu Dhabi, United Arab Emirates, 2024, pp. 2996-3002, doi: 10.1109/ICIP51287.2024.10647708.
-
-No official code
-
-### MAN What can I Say, 2025
-> Dai, P., Shi, Y., Zhou, X., Xiong, T., Luo, J., Chen, Q., Liao, S., Huang, Z., & Yi, X. (2025). Identification of multimodal brain imaging biomarkers in first-episode drugs-naive major depressive disorder through a multi-site large-scale MRI consortium data. Journal of Affective Disorders, 369, 364–372. https://doi.org/https://doi.org/10.1016/j.jad.2024.10.006
-
-No official code
-
-### GNNM, 2025
+### GNNMA, 2025
 > Si, W., Wang, G., Liu, L., Zhang, L., & Qiao, L. (2025). Graph neural network with modular attention for identifying brain disorders. Biomedical Signal Processing and Control, 102, 107252. https://doi.org/https://doi.org/10.1016/j.bspc.2024.107252
 
 [Official Code](https://github.com/siwei9898/GNNMA)
 
+### ContrastPool, 2024
+> J. Xu et al., "Contrastive Graph Pooling for Explainable Classification of Brain Networks," in IEEE Transactions on Medical Imaging, vol. 43, no. 9, pp. 3292-3305, Sept. 2024, doi: 10.1109/TMI.2024.3392988.
+
+[Official Code](https://github.com/AngusMonroe/ContrastPool)
+
 ## MGD4MD
+### Results of different hyperparameter combinations
+Epoch, batch size, learning rate, optimizer, weight decay, random seed 
+
+### Ablation Study
+auxiliary information, diffusion model

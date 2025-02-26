@@ -21,10 +21,10 @@ class IS_MD:
 class Train_Config:
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 24
+    batch_size: int = 12
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(30)
-    lr: float = 1e-5
+    epochs: range = range(100)
+    lr: float = 5e-5
     
 # Brain network
 @dataclass(frozen=True)

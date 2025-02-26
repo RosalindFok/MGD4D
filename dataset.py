@@ -1,5 +1,6 @@
 import json
 import torch
+import random
 import numpy as np
 import nibabel as nib
 import torch.multiprocessing
@@ -17,6 +18,8 @@ torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "Runtim
 from path import Paths
 from plot import draw_atlas
 from config import IS_MD, Train_Config, Gender, Brain_Network, seed
+
+random.seed(seed)
 
 @dataclass
 class Return_Dataloaders:
@@ -213,12 +216,15 @@ class Dataset_Major_Depression(Dataset):
         for atlas_name, matrix in np.load(path_dict["fc"], allow_pickle=True).items():
             assert np.allclose(matrix, matrix.T), f"{atlas_name} matrix {matrix} is not symmetric"
             # functional connectivity has been restricted to [-1, 1]
+            # AAL shape: (116, 116)
+            # HOC shape: (96, 96)
+            # HOS shape: (16, 16)
             fc_matrices[atlas_name] = to_tensor(matrix)
 
         # VBM
         vbm_matrices = {}
         for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
-            # clip the matrix to [0, 1]
+            # matrix shape: (121, 145, 121)
             matrix = np.clip(matrix, 0, 1)
             vbm_matrices[group_name] = to_tensor(matrix)
 
@@ -231,9 +237,7 @@ class Dataset_Major_Depression(Dataset):
         return len(self.path_list)
 
 class KFold_Major_Depression:
-    def __init__(self, is_global_signal_regression : bool, rest_meta_mdd_dir_path : Path = Paths.Run_Files.run_files_rest_meta_mdd_dir_path,
-                train_config:Train_Config = Train_Config) -> None:
-        self.train_config = train_config
+    def __init__(self, is_global_signal_regression : bool, rest_meta_mdd_dir_path : Path = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
         self.rest_meta_mdd_dir_path = rest_meta_mdd_dir_path
         dir_name = "ROISignals_FunImgARglobalCWF" if is_global_signal_regression else "ROISignals_FunImgARCWF"
         
@@ -275,35 +279,13 @@ class KFold_Major_Depression:
             self.paths_dict[key]["vbm"] = vbm_path_dict[key]
 
         # K Fold
-        self.kf = KFold(n_splits=train_config.n_splits.stop-1, shuffle=train_config.shuffle)
+        self.kf = KFold(n_splits=Train_Config.n_splits.stop-1, shuffle=Train_Config.shuffle)
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
         # REST-meta-MDD: "SiteID-Tag-SubjectID"
         subj_list = list(self.paths_dict.keys())
-        # subj_dict = {}  
-        # for subj in subj_list:  
-        #     splits = subj.split("-")  
-        #     subj_dict.setdefault(splits[0], {}).setdefault(splits[1], []).append(subj)  
-        # train_dict, test_dict = defaultdict(list), defaultdict(list)
-        # for _, value in subj_dict.items():
-        #     for _, subjs in value.items():
-        #         fold = 1
-        #         for train_index, test_index in self.kf.split(subjs):
-        #             train_dict[fold].extend([self.paths_dict[subjs[i]] for i in train_index])
-        #             test_dict[fold].extend([self.paths_dict[subjs[i]]  for i in test_index])
-        #             fold += 1
-        # for fold in self.train_config.n_splits:
-        #     assert fold in train_dict.keys() and fold in test_dict.keys(), f"Unknown fold: {fold}"
-        #     kfold_dir_paths[fold] = {"train" : train_dict[fold], 
-        #                              "test"  : test_dict[fold]}
-        import random
-        random.seed(seed)
-        from itertools import zip_longest  
-        group_1 = [item for item in subj_list if "-1-" in item]  
-        group_2 = [item for item in subj_list if "-2-" in item] 
-        subj_list = [item for item in sum(zip_longest(group_1, group_2), ()) if item is not None]
-        random.shuffle(subj_list) # shuffle the sites(hospitals, et.al)
+        random.shuffle(subj_list)
         fold = 1
         for train_index, test_index in self.kf.split(subj_list):
             kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
@@ -311,12 +293,12 @@ class KFold_Major_Depression:
             fold += 1
         return kfold_dir_paths
 
-    def get_dataloader_via_fold(self, fold : int) -> tuple[DataLoader, DataLoader]:
+    def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> tuple[DataLoader, DataLoader]:
         kfold_dir_paths = self.__k_fold__()
         train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
         test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
-        train_dataloader = DataLoader(train_dataset, batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
-        test_dataloader  = DataLoader(test_dataset,  batch_size=self.train_config.batch_size, num_workers=self.train_config.num_workers, shuffle=False)
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False)
+        test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
         return return_dataloaders
 

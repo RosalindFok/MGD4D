@@ -7,10 +7,10 @@ from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
 from torch.optim import lr_scheduler
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score, accuracy_score
 
+from metrics import Metrics
 from config import Train_Config, seed
-from models import device, MGD4MD, CombinedLoss, get_GPU_memory_usage
+from models import device, MGD4MD, get_GPU_memory_usage
 from dataset import get_major_dataloader_via_fold
 
 torch.manual_seed(seed)
@@ -64,11 +64,12 @@ def train(device : torch.device,
         vbm_matrices = move_to_device(vbm_matrices, device)
         tag = move_to_device(tag, device)
         # forward
-        prediction =  model(structural_input_dict=vbm_matrices,
-                            functional_input_dict=fc_matrices,
-                            information_input_dict=auxi_info)
+        output =  model(structural_input_dict=vbm_matrices,
+                        functional_input_dict=fc_matrices,
+                        information_input_dict=auxi_info)
+        tag = nn.functional.one_hot(tag.long(), num_classes=2).float()
         # loss
-        loss = loss_fn(prediction.squeeze(dim=1), tag)
+        loss = loss_fn(output, tag)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
         train_loss_list.append(loss.item())
         # 3 steps of back propagation
@@ -84,11 +85,11 @@ def train(device : torch.device,
 def test(device : torch.device,
          model : nn.Module, 
          dataloader : torch.utils.data.DataLoader,
-         threshold : float = 0.5,
          is_valid : bool = False) -> dict[str, float]:
     model.eval()
     tag_list = []
     prediction_list = []
+    probability_list = []
     with torch.no_grad():
         desc = "Validating" if is_valid else "Testing"
         for auxi_info, fc_matrices, vbm_matrices, tag in tqdm(dataloader, desc=desc, leave=True):
@@ -98,22 +99,24 @@ def test(device : torch.device,
             vbm_matrices = move_to_device(vbm_matrices, device)
             tag = move_to_device(tag, device)
             # forward
-            prediction =  model(structural_input_dict=vbm_matrices,
+            output =  model(structural_input_dict=vbm_matrices,
                                 functional_input_dict=fc_matrices,
                                 information_input_dict=auxi_info)
-            # metrices
+            probability = output[:, -1]
+            prediction = output.argmax(dim=1)
             tag_list.extend(tag.cpu().numpy())
             prediction_list.extend(prediction.cpu().numpy())
+            probability_list.extend(probability.cpu().numpy())
     
     tag = np.array(tag_list).astype(int)
-    prediction = np.array(prediction_list)
-    pred_label = (prediction >= threshold).astype(int)
+    probability = np.array(probability_list).astype(float)
+    prediction = np.array(prediction_list).astype(int)
     metrices = {
-        "AUC" : roc_auc_score(tag, prediction),
-        "ACC" : accuracy_score(tag, pred_label),
-        "PRE" : precision_score(tag, pred_label),
-        "SEN" : recall_score(tag, pred_label),
-        "F1"  : f1_score(tag, pred_label)
+        "AUC" : Metrics.AUC(prob=probability, true=tag),
+        "ACC" : Metrics.ACC(pred=prediction, true=tag),
+        "PRE" : Metrics.PRE(pred=prediction, true=tag),
+        "SEN" : Metrics.SEN(pred=prediction, true=tag),
+        "F1S" : Metrics.F1S(pred=prediction, true=tag)
     }
     metrices = {k : float(v) for k, v in metrices.items()}
 
@@ -129,7 +132,8 @@ def main() -> None:
         auxi_info, fc_matrices, vbm_matrices, tag = next(iter(test_dataloader))
 
         # Model
-        model = MGD4MD(functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
+        model = MGD4MD(auxi_info_number=len(auxi_info),
+                       functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
                        structural_matrices_number=len(vbm_matrices),
                        embedding_dim=512).to(device)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -138,13 +142,16 @@ def main() -> None:
             f.write(str(model))
 
         # Loss
-        loss_fn = CombinedLoss()
+        loss_fn = nn.CrossEntropyLoss()
 
         # Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
 
         for epoch in Train_Config.epochs:
-            scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+            # scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+            lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
 
             print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
             # Train
@@ -154,20 +161,21 @@ def main() -> None:
             metrics = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
             print(metrics)
 
-            scheduler.step()
+            # scheduler.step()
     
         # Test
         print("Test")
         metrics = test(device=device, model=model, dataloader=test_dataloader)
         for k, v in metrics.items():
             test_results[k].append(v)
+        
 
     # Write all results
     results = defaultdict(dict)
     for key, values in test_results.items():
         assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
         results[key] ={"fold" : values, "mean" : np.mean(values)}
-    with open("test_results.txt", "w", encoding="utf-8") as f:
+    with open("test_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4, ensure_ascii=False)  
 
 if __name__ == "__main__":

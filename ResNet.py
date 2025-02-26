@@ -1,356 +1,81 @@
-# Adapted from: https://github.com/Tencent/MedicalNet/blob/master/models/resnet.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from functools import partial
 
-def conv3x3x3(in_planes, out_planes, stride=1, dilation=1):
-    # 3x3x3 convolution with padding
-    return nn.Conv3d(
-        in_planes,
-        out_planes,
-        kernel_size=3,
-        dilation=dilation,
-        stride=stride,
-        padding=dilation,
-        bias=False)
+class Conv3DBlock(nn.Module):  
+    def __init__(self, in_channels : int, out_channels : int, kernel_size : int = 3, stride : int = 1, padding : int = 1) -> None:  
+        super().__init__()  
+        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding)  
+        self.bn = nn.BatchNorm3d(out_channels)  
+        self.ReLU = nn.ReLU()
+        
+    def forward(self, x : torch.Tensor) -> torch.Tensor:  
+        return self.ReLU(self.bn(self.conv(x)))  
 
-
-def downsample_basic_block(x, planes, stride, no_cuda=False):
-    out = F.avg_pool3d(x, kernel_size=1, stride=stride)
-    zero_pads = torch.Tensor(
-        out.size(0), planes - out.size(1), out.size(2), out.size(3),
-        out.size(4)).zero_()
-    if not no_cuda:
-        if isinstance(out.data, torch.cuda.FloatTensor):
-            zero_pads = zero_pads.cuda()
-
-    out = Variable(torch.cat([out.data, zero_pads], dim=1))
-
-    return out
-
-
-class BasicBlock(nn.Module):
-    """
-    2 layers
-    """
-    expansion = 1
-
-    def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
-        super(BasicBlock, self).__init__()
-        self.conv1 = conv3x3x3(inplanes, planes, stride=stride, dilation=dilation)
-        self.bn1 = nn.BatchNorm3d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3x3(planes, planes, dilation=dilation)
-        self.bn2 = nn.BatchNorm3d(planes)
-        self.downsample = downsample
-        self.stride = stride
-        self.dilation = dilation
-
-    def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
-
-
-class Bottleneck(nn.Module):
-    """
-    3 layers
-    """
-    expansion = 4
-
-    def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
-        super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv3d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm3d(planes)
-        self.conv2 = nn.Conv3d(planes, planes, kernel_size=3, stride=stride, dilation=dilation, padding=dilation, bias=False)
-        self.bn2 = nn.BatchNorm3d(planes)
-        self.conv3 = nn.Conv3d(planes, planes * 4, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm3d(planes * 4)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
-        self.dilation = dilation
-
-    def forward(self, x):
-        residual = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-
-        out = self.conv3(out)
-        out = self.bn3(out)
-
-        if self.downsample is not None:
-            residual = self.downsample(x)
-
-        out += residual
-        out = self.relu(out)
-
-        return out
-
-## ResNet of Tencent, for segmentation
-# class ResNet(nn.Module):
-
-#     def __init__(self,
-#                  block,
-#                  layers,
-#                  sample_input_D,
-#                  sample_input_H,
-#                  sample_input_W,
-#                  num_seg_classes,
-#                  shortcut_type='B',
-#                  no_cuda = False):
-#         self.inplanes = 64
-#         self.no_cuda = no_cuda
-#         super(ResNet, self).__init__()
-#         self.conv1 = nn.Conv3d(
-#             1,
-#             64,
-#             kernel_size=7,
-#             stride=(2, 2, 2),
-#             padding=(3, 3, 3),
-#             bias=False)
+class ResBlock3D(nn.Module):  
+    def __init__(self, in_channels : int, out_channels : int, stride : int = 1) -> None:  
+        super().__init__()  
+        self.conv1 = Conv3DBlock(in_channels, out_channels, stride=stride)  
+        self.conv2 = Conv3DBlock(out_channels, out_channels)  
+        
+        # Shortcut connection  
+        self.shortcut = nn.Sequential()  
+        if stride != 1 or in_channels != out_channels:  
+            self.shortcut = nn.Sequential(  
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride),  
+                nn.BatchNorm3d(out_channels)  
+            )  
+        self.ReLU = nn.ReLU()
             
-#         self.bn1 = nn.BatchNorm3d(64)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
-#         self.layer1 = self._make_layer(block, 64, layers[0], shortcut_type)
-#         self.layer2 = self._make_layer(
-#             block, 128, layers[1], shortcut_type, stride=2)
-#         self.layer3 = self._make_layer(
-#             block, 256, layers[2], shortcut_type, stride=1, dilation=2)
-#         self.layer4 = self._make_layer(
-#             block, 512, layers[3], shortcut_type, stride=1, dilation=4)
+    def forward(self, x : torch.Tensor) -> torch.Tensor:  
+        residual = self.shortcut(x)  
+        out = self.conv1(x)  
+        out = self.conv2(out)  
+        out = torch.add(out, residual)
+        return self.ReLU(out)  
 
-        # self.conv_seg = nn.Sequential(
-        #                                 nn.ConvTranspose3d(
-        #                                 512 * block.expansion,
-        #                                 32,
-        #                                 2,
-        #                                 stride=2
-        #                                 ),
-        #                                 nn.BatchNorm3d(32),
-        #                                 nn.ReLU(inplace=True),
-        #                                 nn.Conv3d(
-        #                                 32,
-        #                                 32,
-        #                                 kernel_size=3,
-        #                                 stride=(1, 1, 1),
-        #                                 padding=(1, 1, 1),
-        #                                 bias=False), 
-        #                                 nn.BatchNorm3d(32),
-        #                                 nn.ReLU(inplace=True),
-        #                                 nn.Conv3d(
-        #                                 32,
-        #                                 num_seg_classes,
-        #                                 kernel_size=1,
-        #                                 stride=(1, 1, 1),
-        #                                 bias=False) 
-        #                                 )
+class ResNet3D(nn.Module):  
+    def __init__(self, in_channels : int = 1, embedding_dim : int = 512) -> None:  
+        super().__init__()  
+        
+        out_channels = 64
 
-#         for m in self.modules():
-#             if isinstance(m, nn.Conv3d):
-#                 m.weight = nn.init.kaiming_normal(m.weight, mode='fan_out')
-#             elif isinstance(m, nn.BatchNorm3d):
-#                 m.weight.data.fill_(1)
-#                 m.bias.data.zero_()
+        # Initial convolution  
+        self.conv1 = Conv3DBlock(in_channels, out_channels, kernel_size=7, stride=2, padding=3)  
+        self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)  
+        
+        # Residual blocks  
+        self.layer1 = self.make_layer(in_channels=out_channels  , out_channels=out_channels  , num_blocks=2)  
+        self.layer2 = self.make_layer(in_channels=out_channels  , out_channels=out_channels*2, num_blocks=2, stride=2)  
+        self.layer3 = self.make_layer(in_channels=out_channels*2, out_channels=out_channels*4, num_blocks=2, stride=2)  
+        self.layer4 = self.make_layer(in_channels=out_channels*4, out_channels=out_channels*8, num_blocks=2, stride=2)  
+        
+        # Global average pooling and embedding layer  
+        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))  
 
-#     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
-#         downsample = None
-#         if stride != 1 or self.inplanes != planes * block.expansion:
-#             if shortcut_type == 'A':
-#                 downsample = partial(
-#                     downsample_basic_block,
-#                     planes=planes * block.expansion,
-#                     stride=stride,
-#                     no_cuda=self.no_cuda)
-#             else:
-#                 downsample = nn.Sequential(
-#                     nn.Conv3d(
-#                         self.inplanes,
-#                         planes * block.expansion,
-#                         kernel_size=1,
-#                         stride=stride,
-#                         bias=False), nn.BatchNorm3d(planes * block.expansion))
-
-#         layers = []
-#         layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation, downsample=downsample))
-#         self.inplanes = planes * block.expansion
-#         for i in range(1, blocks):
-#             layers.append(block(self.inplanes, planes, dilation=dilation))
-
-#         return nn.Sequential(*layers)
-
-#     def forward(self, x):
-#         x = self.conv1(x)
-#         x = self.bn1(x)
-#         x = self.relu(x)
-#         x = self.maxpool(x)
-#         x = self.layer1(x)
-#         x = self.layer2(x)
-#         x = self.layer3(x)
-#         x = self.layer4(x)
-#         x = self.conv_seg(x)
-
-#         return x
-
-## ResNet of MGD4MD, for embedding
-class ResNet(nn.Module):
-
-    def __init__(self,
-                 block : nn.Module,
-                 layers : list[int],
-                 embedding_dim : int,
-                 shortcut_type : str ='B'):
-        # self.inplanes = 64
-        self.inplanes = 4
-        super(ResNet, self).__init__()
-        first_out_channels = self.inplanes
-        self.conv1 = nn.Conv3d(
-            in_channels=1,
-            out_channels=first_out_channels,
-            kernel_size=7,
-            stride=(2, 2, 2),
-            padding=(3, 3, 3),
-            bias=False)
-            
-        self.bn1 = nn.BatchNorm3d(first_out_channels)
-        self.ReLU = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
-        self.layer1 = self._make_layer(block, first_out_channels,  layers[0], shortcut_type)
-        self.layer2 = self._make_layer(block, first_out_channels*4, layers[1], shortcut_type, stride=2)
-        self.layer3 = self._make_layer(block, first_out_channels*4**2, layers[2], shortcut_type, stride=1, dilation=2)
-        self.layer4 = self._make_layer(block, first_out_channels*4**3, layers[3], shortcut_type, stride=1, dilation=4)
-
-        self.embedding = nn.Sequential(
-            nn.AdaptiveAvgPool3d(16),  # output: [batchsize, 256*block.expansion, 16, 16, 16]  
-            nn.Conv3d(first_out_channels*4**3*block.expansion, first_out_channels*4**3, kernel_size=3, stride=2, padding=1), # output: [batchsize, 256, 8, 8, 8]
-            nn.BatchNorm3d(first_out_channels*4**3),
-            self.ReLU,
-            nn.Conv3d(first_out_channels*4**3, first_out_channels*4**2, kernel_size=3, stride=2, padding=1), # output: [batchsize, 64, 4, 4, 4]
-            nn.Flatten(),  # output: [batchsize, 64*4**3]  
-            nn.Linear(first_out_channels*4**2*4**3, first_out_channels*4**2*2**3),  # output: [batchsize, 64*8]  
-            self.ReLU,
-            nn.Linear(first_out_channels*4**2*2**3, embedding_dim)
-        )  
-
-    def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, dilation=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            if shortcut_type == 'A':
-                downsample = partial(
-                    downsample_basic_block,
-                    planes=planes * block.expansion,
-                    stride=stride,
-                    no_cuda=self.no_cuda)
-            else:
-                downsample = nn.Sequential(
-                    nn.Conv3d(
-                        self.inplanes,
-                        planes * block.expansion,
-                        kernel_size=1,
-                        stride=stride,
-                        bias=False), nn.BatchNorm3d(planes * block.expansion))
-
-        layers = []
-        layers.append(block(self.inplanes, planes, stride=stride, dilation=dilation, downsample=downsample))
-        self.inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, dilation=dilation))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.ReLU(x)
-        x = self.maxpool(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.embedding(x)
-        return x
-
-def resnet10(**kwargs):
-    """Constructs a ResNet-10 model.
-    10 = 1 + 1*2 + 1*2 + 1*2 + 1*2 + 1
-    """
-    model = ResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
-    return model
-
-
-def resnet18(**kwargs):
-    """Constructs a ResNet-18 model.
-    18 = 1 + 2*2 + 2*2 + 2*2 + 2*2 + 1
-    """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-    return model
-
-def resnet26(embedding_dim : int, **kwargs):
-    """Constructs a ResNet-26 model.
-    26 = 1 + 2*3 + 2*3 + 2*3 + 2*3 + 1
-    MGD4MD
-    """
-    # model = ResNet(block=BasicBlock, layers=[2, 2, 2, 2], embedding_dim=embedding_dim, **kwargs)
-    model = ResNet(block=Bottleneck, layers=[2, 2, 2, 2], embedding_dim=embedding_dim, **kwargs)
-    return model
-
-
-def resnet34(**kwargs):
-    """Constructs a ResNet-34 model.
-    34 = 1 + 3*2 + 4*2 + 6*2 + 3*2 + 1
-    """
-    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
-    return model
-
-
-def resnet50(**kwargs):
-    """Constructs a ResNet-50 model.
-    50 = 1 + 3*3 + 4*3 + 6*3 + 3*3 + 1
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    return model
-
-
-def resnet101(**kwargs):
-    """Constructs a ResNet-101 model.
-    101 = 1 + 3*3 + 4*3 + 23*3 + 3*3 + 1
-    """
-    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    return model
-
-
-def resnet152(**kwargs):
-    """Constructs a ResNet-101 model.
-    152 = 1 + 3*3 + 8*3 + 36*3 + 3*3 + 1
-    """
-    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-    return model
-
-
-def resnet200(**kwargs):
-    """Constructs a ResNet-101 model.
-    200 = 1 + 3*3 + 24*3 + 36*3 + 3*3 + 1
-    """
-    model = ResNet(Bottleneck, [3, 24, 36, 3], **kwargs)
-    return model
+        if not out_channels*8 == embedding_dim:
+            self.fc = nn.Linear(out_channels*8, embedding_dim)  
+        else:
+            self.fc = nn.Identity()
+        
+    def make_layer(self, in_channels : int, out_channels : int, num_blocks : int, stride : int = 1) -> nn.Sequential:  
+        layers = []  
+        layers.append(ResBlock3D(in_channels, out_channels, stride))  
+        for _ in range(1, num_blocks):  
+            layers.append(ResBlock3D(out_channels, out_channels))  
+        return nn.Sequential(*layers)  
+    
+    def forward(self, x : torch.Tensor) -> torch.Tensor:  
+        # Input shape: (batch_size, 1, D, H, W)  
+        x = self.conv1(x)  
+        x = self.maxpool(x)  
+        
+        x = self.layer1(x)  
+        x = self.layer2(x)  
+        x = self.layer3(x)  
+        x = self.layer4(x)  
+        
+        x = self.avgpool(x)  
+        x = x.view(x.size(0), -1)  
+        x = self.fc(x)  
+        
+        return x  
