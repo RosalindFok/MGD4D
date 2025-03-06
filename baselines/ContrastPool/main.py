@@ -13,7 +13,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
-from nets.load_net import gnn_model  # import GNNs
+from baselines.ContrastPool.nets.load_net import gnn_model  # import GNNs
 from data.data import LoadData  # import dataset
 
 

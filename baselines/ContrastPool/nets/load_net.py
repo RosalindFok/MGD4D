@@ -3,7 +3,7 @@
     selected by the user
 """
 
-from nets.contrastpool_net import ContrastPoolNet
+from baselines.ContrastPool.nets.contrastpool_net import ContrastPoolNet
 
 
 def ContrastPool(net_params):

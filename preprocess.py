@@ -15,19 +15,15 @@ from config import Gender, IS_MD
 from plot import plot_heap_map, draw_atlas
 
 
-def clear_temporary_files_of_ants(temp_dir_path : Path = Path("C:") / "Users" / "26036" / "AppData"/ "Local" / "Temp") -> None:
-    # TODO: set your own temp_dir_path. In Linux, it maybe '/tmp'
-    temp_dir_path = Path("C:") / "Users" / "26036" / "AppData"/ "Local" / "Temp"
-    for suffix in ["*.nii.gz", "*.mat"]:
-        for file_path in temp_dir_path.glob(suffix):
-            file_path.unlink(missing_ok=True)
-       
 def register(fixed_path : str, moving_path : str, do_resample : bool = True) -> ants.ANTsImage:
     fixed_image = ants.image_read(fixed_path)
     moving_image = ants.image_read(moving_path)
     if do_resample:
         moving_image = ants.resample_image(moving_image, fixed_image.shape, 1, 0)
-    registered_image = ants.registration(fixed=fixed_image, moving=moving_image, type_of_transform="SyN", aff_metric="MI")
+    outprefix="outprefix_of_registration_" # if not set, it will be C:/"Users"/YourUserName/"AppData"/"Local"/"Temp"
+    registered_image = ants.registration(fixed=fixed_image, outprefix=outprefix, moving=moving_image, type_of_transform="SyN", aff_metric="MI")
+    for file_path in list(Path(".").glob(f"{outprefix}*")):
+        file_path.unlink()
     return registered_image["warpedmovout"]
 
 def split_4dantsImageFrame_into_3d(image_4d : ants.ANTsImage) -> str:
@@ -52,7 +48,108 @@ def adjust_dim_of_antsImage(image_5d_path : Path) -> None:
         nib.save(new_img, image_5d_path)
         end_time = time.time()
         print(f"It took {end_time - start_time:.2f} seconds to adjust dim of {image_5d_path.absolute()}")
- 
+
+def extract_motion_parameters(transform_matrix : ants.ANTsTransform) -> list[float, float, float, float, float, float]:  
+    """Extracts 6 rigid-body motion parameters from an ANTs transformation matrix.  
+    
+    This function decomposes an ANTs transformation matrix into 6 motion parameters,  
+    consisting of 3 rotation angles (in degrees) and 3 translation values. The rotation  
+    parameters are extracted using the principles of rotation matrix decomposition into  
+    Euler angles (pitch, roll, yaw).  
+    
+    Args:  
+        transform_matrix: An ANTs transformation matrix object (ANTsTransform)   
+            containing the affine transformation parameters. This should be a  
+            rigid or affine transformation.  
+    
+    Returns:  
+        A list of 6 float values representing the motion parameters in the  
+        following order: [rx, ry, rz, tx, ty, tz], where:  
+            - rx: Rotation around X-axis in degrees (pitch)  
+            - ry: Rotation around Y-axis in degrees (roll)  
+            - rz: Rotation around Z-axis in degrees (yaw)  
+            - tx: Translation along X-axis in input space units  
+            - ty: Translation along Y-axis in input space units  
+            - tz: Translation along Z-axis in input space units  
+    
+    Notes:  
+        - The implementation assumes a particular order in the transform_matrix.parameters  
+          array where the rotation components are stored in the first 9 elements and  
+          the translation components in the last 3 elements.  
+        - The conversion from radians to degrees is performed using the factor 180.0/π.  
+    """ 
+    # Extract parameters from transformation matrix  
+    params = transform_matrix.parameters  
+    
+    # Extract translation parameters (last 3 elements)  
+    tx, ty, tz = params[-3:]  
+    
+    # Extract rotation matrix and convert to Euler angles  
+    rx = np.arctan2(params[7], params[8]) * 180.0 / np.pi  
+    ry = np.arcsin(-params[6]) * 180.0 / np.pi  
+    rz = np.arctan2(params[3], params[0]) * 180.0 / np.pi  
+    
+    return [rx, ry, rz, tx, ty, tz]  
+
+def head_motion_correction(func4d_path: Path) -> ants.ANTsImage:  
+    """  
+    Perform head motion correction on a 4D functional image.  
+
+    Args:  
+        func4d_path: Path to the 4D functional image file.  
+
+    Returns:  
+        A 4D ANTsImage with corrected volumes after motion correction.  
+    """  
+    func_image = ants.image_read(str(func4d_path))  
+    
+    # Get the number of time points (volumes)  
+    n_volumes = func_image.shape[-1]  
+    
+    # Extract the reference volume  
+    reference_volume = 0  
+    reference = ants.slice_image(func_image, axis=3, idx=reference_volume)  
+    
+    # Initialize storage for motion parameters  
+    motion_params = []  
+    
+    # Initialize storage for corrected volumes  
+    corrected_volumes = []  
+    corrected_volumes.append(reference)  # The first volume (reference) remains unchanged  
+    
+    # Perform registration for each volume  
+    for i in tqdm(range(n_volumes), desc=f"Head motion correcting {func4d_path.stem.split(".")[0]}", leave=True):  
+        if i == reference_volume:  
+            # Skip the reference volume  
+            motion_params.append(np.zeros(6))  # Add zero motion parameters  
+            continue  
+        
+        # Extract the current volume  
+        moving = ants.slice_image(func_image, axis=3, idx=i)  
+        
+        # Perform rigid-body registration  
+        registration = ants.registration(  
+            fixed=reference,  
+            moving=moving,  
+            type_of_transform='Rigid',  
+            verbose=False  
+        )  
+        
+        # Store the registered volume  
+        corrected_volumes.append(registration['warpedmovout'])  
+        
+        # Extract the transformation matrix  
+        transform = registration['fwdtransforms'][0]  
+        matrix = ants.read_transform(transform)  
+        
+        # Extract 6 motion parameters (3 rotations and 3 translations) from the ANTs transform  
+        params = extract_motion_parameters(matrix)  
+        motion_params.append(params)  
+    
+    # Merge all corrected volumes into a 4D image  
+    corrected_4d = ants.merge_channels(corrected_volumes)  
+    return corrected_4d  
+
 def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path, 
                                             participants_info : pd.DataFrame | dict,
                                             anat3d_path : Path, func4d_path : Path, 
@@ -76,7 +173,17 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
     if not fig_path.exists():
         draw_atlas(atlas = nib.load(atlas_path), saved_path=fig_path)
 
-    # Step 1: Register
+    # Step 1: head motion correction
+    # func
+    corrected_func_path = saved_dir_path / "corrected_func.nii.gz"
+    if not corrected_func_path.exists():
+        corrected_func = head_motion_correction(func4d_path)
+        ants.image_write(corrected_func, str(corrected_func_path))
+        del corrected_func
+    # change the dim[0] from 5 to 4
+    adjust_dim_of_antsImage(corrected_func_path)
+
+    # Step 2: Register
     # anat: anat -> atlas 
     aligned_anat_path = saved_dir_path / "aligned_anat.nii.gz"
     if not aligned_anat_path.exists():
@@ -87,7 +194,7 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
     # func: func -> anat
     aligned_func_path = saved_dir_path / "aligned_func.nii.gz"
     if not aligned_func_path.exists():
-        moving_image = ants.image_read(str(func4d_path))
+        moving_image = ants.image_read(str(corrected_func_path))
         results_list = [] 
         for t in tqdm(range(moving_image.shape[-1]), desc=f"Registering {saved_dir_path.name}: {func4d_path.parent.name}", leave=True):
             # delete the first 5 frames
@@ -106,10 +213,8 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
         del moving_image, results_list
     # change the dim[0] from 5 to 4
     adjust_dim_of_antsImage(aligned_func_path)
-    # Clear the temporary files of ants
-    clear_temporary_files_of_ants()
 
-    # Step 2: Denoise
+    # Step 3: Denoise
     # anat 
     denoised_anat_path = saved_dir_path / "denoised_anat.nii.gz"
     if not denoised_anat_path.exists():
@@ -242,6 +347,7 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
 
 def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
                       saved_root_dir_path : Path  = Paths.Run_Files.run_files_cambridge_dir_path) -> None:
+    assert dir_path.exists(), f"{dir_path} does not exist"
     # read demographics
     participants_info = {} # {sub_name : {age, gender}}
     with dir_path.demographics_txt_path.open('r') as f: 
@@ -267,6 +373,7 @@ def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
 
 def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_path,
                           saved_root_dir_path : Path  = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
+    assert dir_path.exists(), f"{dir_path} does not exist"
     # Auxiliary information
     participants_info = {} # {sub_id : {key : value}}
     participants_info_xlsx_path = dir_path / "REST-meta-MDD-PhenotypicData_WithHAMDSubItem_V4.xlsx"
@@ -337,7 +444,7 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                 if not fc_matrices_path.exists():
                     fc_matrices = {}
                     for atlas_name, time_series in time_series_pair.items():
-                        matrix = connectome.ConnectivityMeasure(kind='correlation', standardize=True).fit_transform([time_series])[0] 
+                        matrix = connectome.ConnectivityMeasure(kind='correlation', standardize="zscore_sample").fit_transform([time_series])[0] 
                         np.fill_diagonal(matrix, 0) # set the diagonal to 0 (1 -> 0)
                         plot_heap_map(matrix=matrix, saved_dir_path=saved_dir_path, fig_name=f"{atlas_name}_fc_matrix.svg")
                         fc_matrices[atlas_name] = matrix
@@ -373,10 +480,10 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
 
 def main() -> None:
     process_ds002748()
-    process_ds003007()
+    # process_ds003007()
     # TODO
     # process_Cambridge()
-    process_rest_meta_mdd()
+    # process_rest_meta_mdd()
 
 if __name__ == "__main__":
     main()

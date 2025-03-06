@@ -11,35 +11,13 @@ class Depression_Path:
     ds003007_dir_path: Path = depression_dir_path / "ds003007"
     # Major depression
     REST_meta_MDD_dir_path: Path = depression_dir_path / "REST-meta-MDD"
-    assert ds002748_dir_path.exists(), f"{ds002748_dir_path} does not exist"
-    assert ds003007_dir_path.exists(), f"{ds003007_dir_path} does not exist"
-    assert REST_meta_MDD_dir_path.exists(), f"{REST_meta_MDD_dir_path} does not exist"
 
 @dataclass(frozen=True)
 class Functional_Connectomes_1000_Path:
     root_dir: Path = dataset_dir_path / "1000_Functional_Connectomes"
     demographics_txt_path: Path = root_dir / "Cambridge_Buckner_part1" / "Cambridge_Buckner_demographics.txt"
-    assert demographics_txt_path.exists(), f"{demographics_txt_path} does not exist"
 
 Atlas_root_dir_path = Path("Atlas")
-
-@dataclass(frozen=True)
-class AAL_Path:
-    dir_path: Path = Atlas_root_dir_path / "AAL"
-    mri_path: Path = dir_path / "aal.nii"
-    labels_path: Path = dir_path / "aal_Labels.mat"
-
-@dataclass(frozen=True)
-class HarvardOxford_Path:
-    dir_path: Path = Atlas_root_dir_path / "HarvardOxford"
-    cort_mri_path: Path = dir_path / "HarvardOxford-cort-maxprob-thr25-2mm_YCG.nii"
-    cort_labels_path: Path = dir_path / "HarvardOxford-cort-maxprob-thr25-2mm_YCG_Labels.mat"
-    sub_mri_path: Path = dir_path / "HarvardOxford-sub-maxprob-thr25-2mm_YCG.nii"
-    sub_labels_path: Path = dir_path / "HarvardOxford-sub-maxprob-thr25-2mm_YCG_Labels.mat"
-    assert cort_mri_path.exists(), f"{cort_mri_path} does not exist"
-    assert cort_labels_path.exists(), f"{cort_labels_path} does not exist"
-    assert sub_mri_path.exists(), f"{sub_mri_path} does not exist"
-    assert sub_labels_path.exists(), f"{sub_labels_path} does not exist"
 
 @dataclass(frozen=True)
 class Brainnetome_Path:
@@ -55,14 +33,11 @@ class Brainnetome_Path:
 
 @dataclass(frozen=True)
 class Atlas_Path:
-    AAL: AAL_Path = AAL_Path
-    HarvardOxford: HarvardOxford_Path = HarvardOxford_Path
     Brainnetome: Brainnetome_Path = Brainnetome_Path
 
 @dataclass(frozen=True)
 class Run_Files_Path:
     run_files_dir_path = Path("..") / "run_files"
-    assert run_files_dir_path.exists(), f"{run_files_dir_path} does not exist"
     run_files_ds002748_dir_path = run_files_dir_path / "ds002748"
     run_files_ds003007_dir_path = run_files_dir_path / "ds003007"
     run_files_rest_meta_mdd_dir_path = run_files_dir_path / "REST_meta_MDD"

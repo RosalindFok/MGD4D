@@ -6,7 +6,7 @@ STATE_FILE="state_${BATCH_JOB_ID}.log"
 /usr/bin/touch ${STATE_FILE}
 
 # Execute the example script
-python scripts_baselines.py
+python scripts_baselines.py --model ContrasPool
 
 # Stop the GPU collection process
 echo "over" >> "${STATE_FILE}"

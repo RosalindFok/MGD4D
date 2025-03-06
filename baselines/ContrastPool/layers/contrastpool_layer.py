@@ -5,7 +5,7 @@ from torch.nn import functional as F
 import numpy as np
 from scipy.linalg import block_diag
 from torch.autograd import Function
-from layers.graphsage_layer import GraphSageLayer, DenseGraphSage
+from baselines.ContrastPool.layers.graphsage_layer import GraphSageLayer, DenseGraphSage
 
 
 def masked_softmax(matrix, mask, dim=-1, memory_efficient=True,

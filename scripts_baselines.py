@@ -1,5 +1,6 @@
 import json
 import torch
+import argparse
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
@@ -10,81 +11,119 @@ from metrics import Metrics
 from config import Train_Config
 from dataset import get_major_dataloader_via_fold
 
-# GNNMA: https://doi.org/10.1016/j.bspc.2024.107252
-from baselines.GNNMA.models import NEResGCN
 
 # TODO 考虑各个baseline的License不同，还是不放仓库里了，自己跑一跑算了
 
 if __name__ == '__main__':
-    """GNNMA"""
-    model = NEResGCN(layer=5).to(device)
-    # default settings, but it is uncertain whether they were adopted by GNNMA
-    seed = 127
-    epochs = 25
-    lr = 0.1
-    weight_decay = 5e-4
-    # optimizer is the same as GNNMA
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-    # loss is the same as GNNMA
-    loss = nn.CrossEntropyLoss()
-    # batchsize is the same as GNNMA
-    batch_size = 6
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str)
+    args = parser.parse_args()
+    assert args.model in ["ORCGNN", "DGCN", "GNNMA", "ContrasPool"], f"{args.model} is not supported, please choose from [ORCGNN, DGCN, GNNMA, ContrasPool]"
 
-    # I tried different hyperparameters in an attempt to align with the results in the paper.
-    lr = 1e-5
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    if args.model == "GNNMA":
+        """GNNMA: https://doi.org/10.1016/j.bspc.2024.107252"""
+        from baselines.GNNMA.models import NEResGCN
+        model = NEResGCN(layer=5).to(device)
+        # default settings, but it is uncertain whether they were adopted by GNNMA
+        seed = 127
+        epochs = 25
+        lr = 0.1
+        weight_decay = 5e-4
+        # optimizer is the same as GNNMA
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+        # loss is the same as GNNMA
+        loss = nn.CrossEntropyLoss()
+        # batchsize is the same as GNNMA
+        batch_size = 6
 
-    test_results = defaultdict(list)
-    for fold in Train_Config.n_splits: # it is 5 in GNNMA
-        return_dataloaders = get_major_dataloader_via_fold(fold=fold, batch_size=batch_size)
-        train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
+        # I tried different hyperparameters in an attempt to align with the results in the paper.
+        lr = 1e-5
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-        for epoch in range(epochs):
-            # train
-            model.train()
-            loss_list = []
-            for _, fc_matrices, _, tag in tqdm(train_dataloader, desc="Train", leave=True):
-                aal_matrix = fc_matrices["AAL"].to(device)
-                tag = nn.functional.one_hot(tag.long(), num_classes=2).to(device)
-                y_pred = model(aal_matrix, aal_matrix)
-                loss_train = loss(y_pred, tag.float())
-                loss_train.backward()
-                optimizer.zero_grad()
-                optimizer.step()
-                loss_list.append(loss_train.item())
-            print(f"Epoch {epoch + 1}/{epochs}, Loss: {sum(loss_list) / len(loss_list)}")
+        test_results = defaultdict(list)
+        for fold in Train_Config.n_splits: # it is 5 in GNNMA
+            return_dataloaders = get_major_dataloader_via_fold(fold=fold, batch_size=batch_size)
+            train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
 
-            # valid/test
-            model.eval()
-            prob_list, pred_list, tag_list = [], [], []
-            with torch.no_grad():
-                for _, fc_matrices, _, tag in tqdm(test_dataloader, desc="Test", leave=True):
+            for epoch in range(epochs):
+                # train
+                model.train()
+                loss_list = []
+                for _, fc_matrices, _, tag in tqdm(train_dataloader, desc="Train", leave=True):
                     aal_matrix = fc_matrices["AAL"].to(device)
+                    tag = nn.functional.one_hot(tag.long(), num_classes=2).to(device)
                     y_pred = model(aal_matrix, aal_matrix)
-                    prob_list.extend(y_pred[:, -1].cpu().numpy())
-                    pred_list.extend(y_pred.argmax(dim=1).cpu().numpy())
-                    tag_list.extend(tag.cpu().numpy())
-            prob = np.array(prob_list).astype(float)
-            pred = np.array(pred_list).astype(int)
-            tag  = np.array(tag_list).astype(int)
+                    loss_train = loss(y_pred, tag.float())
+                    loss_train.backward()
+                    optimizer.zero_grad()
+                    optimizer.step()
+                    loss_list.append(loss_train.item())
+                print(f"Epoch {epoch + 1}/{epochs}, Loss: {sum(loss_list) / len(loss_list)}")
 
-            metrices = {
-                "AUC" : Metrics.AUC(prob=prob, true=tag),
-                "ACC" : Metrics.ACC(pred=pred, true=tag),
-                "PRE" : Metrics.PRE(pred=pred, true=tag),
-                "SEN" : Metrics.SEN(pred=pred, true=tag),
-                "F1S" : Metrics.F1S(pred=pred, true=tag)
-            }
-            metrices = {k : float(v) for k, v in metrices.items()}
+                # valid/test
+                model.eval()
+                prob_list, pred_list, tag_list = [], [], []
+                with torch.no_grad():
+                    for _, fc_matrices, _, tag in tqdm(test_dataloader, desc="Test", leave=True):
+                        aal_matrix = fc_matrices["AAL"].to(device)
+                        y_pred = model(aal_matrix, aal_matrix)
+                        prob_list.extend(y_pred[:, -1].cpu().numpy())
+                        pred_list.extend(y_pred.argmax(dim=1).cpu().numpy())
+                        tag_list.extend(tag.cpu().numpy())
+                prob = np.array(prob_list).astype(float)
+                pred = np.array(pred_list).astype(int)
+                tag  = np.array(tag_list).astype(int)
+
+                metrices = {
+                    "AUC" : Metrics.AUC(prob=prob, true=tag),
+                    "ACC" : Metrics.ACC(pred=pred, true=tag),
+                    "PRE" : Metrics.PRE(pred=pred, true=tag),
+                    "SEN" : Metrics.SEN(pred=pred, true=tag),
+                    "F1S" : Metrics.F1S(pred=pred, true=tag)
+                }
+                metrices = {k : float(v) for k, v in metrices.items()}
+                for key, value in metrices.items():
+                    print(f"{key}: {value}")
             for key, value in metrices.items():
-                print(f"{key}: {value}")
-        for key, value in metrices.items():
-            test_results[key].append(value)
+                test_results[key].append(value)
+
+        # Write all results
+        results = defaultdict(dict)
+        for key, values in test_results.items():
+            assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
+            results[key] ={"fold" : values, "mean" : np.mean(values)}
+        with open("test_results.json", "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=4, ensure_ascii=False)  
+
     
-    # Write all results
-    results = defaultdict(dict)
-    for key, values in test_results.items():
-        assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
-        results[key] ={"fold" : values, "mean" : np.mean(values)}
-    with open("test_results.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)  
+    elif args.model == "ContrasPool":
+        """ContrasPool: https://doi.org/10.1109/TMI.2024.3392988"""
+        # --node_feat_transform pearson 
+        # --max_time 60 
+        # --init_lr 1e-2 
+        # --threshold 0.0 
+        # --batch_size 20 
+        # --dropout 0.0 
+        # --contrast 
+        # --pool_ratio 0.5 
+        # --lambda1 1e-3 --L 2
+        # https://github.com/AngusMonroe/ContrastPool/blob/main/configs/abide_schaefer100/TUs_graph_classification_ContrastPool_abide_schaefer100_100k.json
+        from pathlib import Path
+        from baselines.ContrastPool.nets.load_net import gnn_model
+        json_path = Path("baselines") / "ContrastPool" / "configs" / "abide_schaefer100" / "TUs_graph_classification_ContrastPool_abide_schaefer100_100k.json"
+        assert json_path.exists(), f"{json_path} does not exist."
+        with open(json_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        model = gnn_model(MODEL_NAME=config["model"], net_params=config["net_params"]).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=config["params"]["init_lr"], weight_decay=config["params"]["weight_decay"])
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=config["params"]["lr_reduce_factor"],
+                                                               patience=config["params"]["lr_reduce_patience"], verbose=True)
+        
+        for fold in Train_Config.n_splits: # other dataset were used in ContrasPool
+            return_dataloaders = get_major_dataloader_via_fold(fold=fold, batch_size=config["params"]["batch_size"])
+            train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
+            for epoch in range(config["params"]["epochs"]):
+                # train
+                model.train()
+                for _, fc_matrices, _, tag in tqdm(train_dataloader, desc="Train", leave=True):
+                    pass

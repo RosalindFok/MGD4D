@@ -28,6 +28,9 @@ class Return_Dataloaders:
 
 def load_atlas() -> dict[str, list[str]]:
         """
+        AAL: Automated Anatomical Labeling, 116=90+26
+        HOC: Harvard Oxford Cortical
+        HOS: Harvard Oxford Subcortical
         """
         # download DPABI from https://d.rnet.co/DPABI/DPABI_V8.2_240510.zip
         # Unzip the zip file, extract some files from the folder "Templates" and put them under downloaded_atlas_dir_path

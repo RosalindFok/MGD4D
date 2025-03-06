@@ -6,7 +6,6 @@ from tqdm import tqdm
 from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
-from torch.optim import lr_scheduler
 
 from metrics import Metrics
 from config import Train_Config, seed
@@ -85,7 +84,8 @@ def train(device : torch.device,
 def test(device : torch.device,
          model : nn.Module, 
          dataloader : torch.utils.data.DataLoader,
-         is_valid : bool = False) -> dict[str, float]:
+         is_valid : bool = False,
+         log_epoch : int = -1) -> dict[str, float]:
     model.eval()
     tag_list = []
     prediction_list = []
@@ -97,20 +97,20 @@ def test(device : torch.device,
             auxi_info = move_to_device(auxi_info, device)
             fc_matrices = move_to_device(fc_matrices, device)
             vbm_matrices = move_to_device(vbm_matrices, device)
-            tag = move_to_device(tag, device)
             # forward
             output =  model(structural_input_dict=vbm_matrices,
                                 functional_input_dict=fc_matrices,
                                 information_input_dict=auxi_info)
             probability = output[:, -1]
             prediction = output.argmax(dim=1)
-            tag_list.extend(tag.cpu().numpy())
+            tag_list.extend(tag.numpy())
             prediction_list.extend(prediction.cpu().numpy())
             probability_list.extend(probability.cpu().numpy())
     
     tag = np.array(tag_list).astype(int)
     probability = np.array(probability_list).astype(float)
     prediction = np.array(prediction_list).astype(int)
+    assert tag.shape == probability.shape == prediction.shape, f"{tag.shape} != {probability.shape} != {prediction.shape}"
     metrices = {
         "AUC" : Metrics.AUC(prob=probability, true=tag),
         "ACC" : Metrics.ACC(pred=prediction, true=tag),
@@ -119,6 +119,12 @@ def test(device : torch.device,
         "F1S" : Metrics.F1S(pred=prediction, true=tag)
     }
     metrices = {k : float(v) for k, v in metrices.items()}
+
+    if log_epoch >= 0:
+        with open(f"epoch_{log_epoch}.txt", "w") as f:
+            f.write(f"tag\t\tprobability\t\tprediction\n")
+            for t, p, pred in zip(tag, probability, prediction):
+                f.write(f"{t}\t\t{p:.4f}\t\t{pred}\n")
 
     return metrices
 
@@ -134,8 +140,8 @@ def main() -> None:
         # Model
         model = MGD4MD(auxi_info_number=len(auxi_info),
                        functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
-                       structural_matrices_number=len(vbm_matrices),
-                       embedding_dim=512).to(device)
+                       structural_matrices_shape={k:v.shape[1:] for k,v in vbm_matrices.items()},
+                       embedding_dim=Train_Config.latent_embedding_dim).to(device)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
         with open("model_structure.txt", "w") as f:  
@@ -148,7 +154,6 @@ def main() -> None:
         optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
 
         for epoch in Train_Config.epochs:
-            # scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
             lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
@@ -160,22 +165,19 @@ def main() -> None:
             # Valid
             metrics = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
             print(metrics)
-
-            # scheduler.step()
     
         # Test
         print("Test")
         metrics = test(device=device, model=model, dataloader=test_dataloader)
-        for k, v in metrics.items():
-            test_results[k].append(v)
-        
+        with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=4, ensure_ascii=False)
 
     # Write all results
     results = defaultdict(dict)
     for key, values in test_results.items():
         assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
         results[key] ={"fold" : values, "mean" : np.mean(values)}
-    with open("test_results.json", "w", encoding="utf-8") as f:
+    with open("all_test_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4, ensure_ascii=False)  
 
 if __name__ == "__main__":

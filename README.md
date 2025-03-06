@@ -13,6 +13,7 @@ pip install pandas
 pip install tqdm
 pip install matplotlib
 pip install nilearn
+pip install fmriprep
 
 # script
 python preprocess.py
@@ -69,6 +70,9 @@ No official code
 > J. Xu et al., "Contrastive Graph Pooling for Explainable Classification of Brain Networks," in IEEE Transactions on Medical Imaging, vol. 43, no. 9, pp. 3292-3305, Sept. 2024, doi: 10.1109/TMI.2024.3392988.
 
 [Official Code](https://github.com/AngusMonroe/ContrastPool)
+
+source activate contrastpool
+服务器上缺OSError: /lib64/libm.so.6: version `GLIBC_2.27'
 
 ## MGD4MD
 ### Results of different hyperparameter combinations

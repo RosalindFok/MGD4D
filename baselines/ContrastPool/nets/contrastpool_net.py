@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 import torch.nn.functional as F
-from layers.attention_layer import EncoderLayer
+from baselines.ContrastPool.layers.attention_layer import EncoderLayer
 import time
 import numpy as np
 from scipy.linalg import block_diag
 import dgl
 
-from layers.graphsage_layer import GraphSageLayer, DenseGraphSage
-from layers.contrastpool_layer import ContrastPoolLayer, DenseDiffPool
+from baselines.ContrastPool.layers.graphsage_layer import GraphSageLayer, DenseGraphSage
+from baselines.ContrastPool.layers.contrastpool_layer import ContrastPoolLayer, DenseDiffPool
 
 
 class ContrastPoolNet(nn.Module):
