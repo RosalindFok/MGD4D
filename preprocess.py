@@ -8,23 +8,20 @@ import numpy as np
 import pandas as pd 
 import nibabel as nib 
 from tqdm import tqdm
-from nilearn import maskers, connectome
+from nilearn import maskers, connectome, image
 
 from path import Path, Paths
 from config import Gender, IS_MD
 from plot import plot_heap_map, draw_atlas
 
 
-def register(fixed_path : str, moving_path : str, do_resample : bool = True) -> ants.ANTsImage:
+def register(fixed_path : str, moving_path : str, outprefix : str = "") -> tuple[ants.ANTsImage, list[str]]:
+    # if not set outprefix, it will be C:/"Users"/YourUserName/"AppData"/"Local"/"Temp"
     fixed_image = ants.image_read(fixed_path)
     moving_image = ants.image_read(moving_path)
-    if do_resample:
-        moving_image = ants.resample_image(moving_image, fixed_image.shape, 1, 0)
-    outprefix="outprefix_of_registration_" # if not set, it will be C:/"Users"/YourUserName/"AppData"/"Local"/"Temp"
+    moving_image = ants.resample_image(moving_image, fixed_image.shape, 1, 0) 
     registered_image = ants.registration(fixed=fixed_image, outprefix=outprefix, moving=moving_image, type_of_transform="SyN", aff_metric="MI")
-    for file_path in list(Path(".").glob(f"{outprefix}*")):
-        file_path.unlink()
-    return registered_image["warpedmovout"]
+    return registered_image["warpedmovout"], registered_image["fwdtransforms"] 
 
 def split_4dantsImageFrame_into_3d(image_4d : ants.ANTsImage) -> str:
     assert image_4d.shape[-1] == 1 and image_4d.dimension == 4, f"image_4d.shape={image_4d.shape}, image_4d.dimension={image_4d.dimension}"
@@ -118,7 +115,7 @@ def head_motion_correction(func4d_path: Path) -> ants.ANTsImage:
     corrected_volumes.append(reference)  # The first volume (reference) remains unchanged  
     
     # Perform registration for each volume  
-    for i in tqdm(range(n_volumes), desc=f"Head motion correcting {func4d_path.stem.split(".")[0]}", leave=True):  
+    for i in tqdm(range(n_volumes), desc=f"Head motion correcting {func4d_path.stem.split('_')[0]}", leave=True):  
         if i == reference_volume:  
             # Skip the reference volume  
             motion_params.append(np.zeros(6))  # Add zero motion parameters  
@@ -184,33 +181,53 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
     adjust_dim_of_antsImage(corrected_func_path)
 
     # Step 2: Register
+    outprefix = "outprefix_of_registration_"
     # anat: anat -> atlas 
     aligned_anat_path = saved_dir_path / "aligned_anat.nii.gz"
     if not aligned_anat_path.exists():
-        print(f"Registering {saved_dir_path.name}: {anat3d_path.parent.name}")
-        result = register(fixed_path=str(atlas_path), moving_path=str(anat3d_path))
+        print(f"Registering {saved_dir_path.name}: anat -> atlas")
+        result, fwdtransforms = register(fixed_path=str(atlas_path), 
+                                         moving_path=str(anat3d_path), 
+                                         outprefix=outprefix)
         ants.image_write(result, str(aligned_anat_path))
-        del result
+        for file in Path(".").glob(f"{outprefix}*"):
+            file.unlink()
+        del result, fwdtransforms
     # func: func -> anat
     aligned_func_path = saved_dir_path / "aligned_func.nii.gz"
     if not aligned_func_path.exists():
         moving_image = ants.image_read(str(corrected_func_path))
+        # Get the first valid frame (after skipping 5 frames)  
+        reference_frame_idx = 5  # The 6th frame (index 5)  
+        reference_frame = moving_image[:, :, :, reference_frame_idx:reference_frame_idx+1]  
+        reference_temp_path = split_4dantsImageFrame_into_3d(image_4d=reference_frame) 
+        # register only the reference frame to get the transformation  
+        _, transforms = register(fixed_path=str(aligned_anat_path), 
+                                 moving_path=reference_temp_path,
+                                 outprefix=outprefix)  
+
+        # apply the same transformation to all frames (except the first 5)  
         results_list = [] 
-        for t in tqdm(range(moving_image.shape[-1]), desc=f"Registering {saved_dir_path.name}: {func4d_path.parent.name}", leave=True):
+        for t in tqdm(range(moving_image.shape[-1]), desc=f"Registering {saved_dir_path.name}-func", leave=True):
             # delete the first 5 frames
-            if t < 5:
+            if t < reference_frame_idx:
                 continue
             # t:t+1 cannot be t, and ":,:,:," cannot be "...,", otherwise the orientation will be wrong
             moving_image_t = moving_image[:, :, :, t:t+1]
             temp_path = split_4dantsImageFrame_into_3d(image_4d=moving_image_t)
             # register
-            result = register(fixed_path=str(aligned_anat_path), moving_path=temp_path)
+            result = ants.apply_transforms(fixed=ants.image_read(str(aligned_anat_path)), 
+                                            moving=ants.image_read(temp_path),
+                                            transformlist=transforms)
             results_list.append(result)
             # delete temporary file and variables
             Path(temp_path).unlink()
             del result, moving_image_t, temp_path
         ants.image_write(ants.merge_channels(results_list), str(aligned_func_path))
         del moving_image, results_list
+        for file in Path(".").glob(f"{outprefix}*"):
+            file.unlink()
+        del transforms
     # change the dim[0] from 5 to 4
     adjust_dim_of_antsImage(aligned_func_path)
 
@@ -225,20 +242,16 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
     # func
     denoised_func_path = saved_dir_path / "denoised_func.nii.gz"
     if not denoised_func_path.exists():
-        aligned_func = ants.image_read(str(aligned_func_path))
-        results_list = [] 
-        for t in tqdm(range(aligned_func.shape[-1]), desc=f"Denoising {denoised_func_path.parent.name}: func", leave=True):
-            aligned_func_t = aligned_func[:, :, :, t:t+1]
-            temp_path = split_4dantsImageFrame_into_3d(image_4d=aligned_func_t)
-            result = ants.denoise_image(ants.image_read(str(temp_path)))
-            results_list.append(result)
-            # delete temporary file and variables
-            Path(temp_path).unlink()
-            del result, aligned_func_t, temp_path
-        ants.image_write(ants.merge_channels(results_list, channels_first=True), str(denoised_func_path))
-        del aligned_func, results_list
-    # change the dim[0] from 5 to 4
-    adjust_dim_of_antsImage(denoised_func_path)
+        print(f"Denoising {denoised_func_path.parent.name}: func")
+        start_time = time.time()
+        smoothed_img = image.smooth_img(  
+            str(aligned_func_path),   
+            fwhm=1.0  # adjust the filtering width, mm  
+        )  
+        smoothed_img.to_filename(str(denoised_func_path))  
+        end_time = time.time()
+        print(f"It took {end_time - start_time:.2f} seconds to denoise the {denoised_func_path.stem}.")
+        del smoothed_img
 
     # Step 3: Functional connectivity
     fc_matrix_path = saved_dir_path / "fc_matrix.npy"
