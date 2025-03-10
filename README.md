@@ -13,7 +13,6 @@ pip install pandas
 pip install tqdm
 pip install matplotlib
 pip install nilearn
-pip install fmriprep
 
 # script
 python preprocess.py

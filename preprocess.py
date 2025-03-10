@@ -20,7 +20,8 @@ def register(fixed_path : str, moving_path : str, outprefix : str = "") -> tuple
     fixed_image = ants.image_read(fixed_path)
     moving_image = ants.image_read(moving_path)
     moving_image = ants.resample_image(moving_image, fixed_image.shape, 1, 0) 
-    registered_image = ants.registration(fixed=fixed_image, outprefix=outprefix, moving=moving_image, type_of_transform="SyN", aff_metric="MI")
+    registered_image = ants.registration(fixed=fixed_image, outprefix=outprefix, moving=moving_image, 
+                                         type_of_transform="SyN", aff_metric="MI")
     return registered_image["warpedmovout"], registered_image["fwdtransforms"] 
 
 def split_4dantsImageFrame_into_3d(image_4d : ants.ANTsImage) -> str:
@@ -282,7 +283,7 @@ def process_ds002748(dir_path : Path = Paths.Depression.ds002748_dir_path,
     participants_tsv_path = dir_path / "participants.tsv"
     assert participants_tsv_path.exists(), f"{participants_tsv_path.absolute()} does not exist!"
     participants_info = pd.read_csv(participants_tsv_path, sep='\t')
-    sub_dir_path_list = [d for d in dir_path.iterdir() if d.is_dir()]
+    sub_dir_path_list = [d for d in dir_path.iterdir() if d.is_dir()and d.name.startswith('sub-')]
     assert len(sub_dir_path_list) == len(participants_info), f"len(sub_dir_path_list)={len(sub_dir_path_list)} != len(participants_info)={len(participants_info)}"
     sub_anat_nii_path_dict = {d.name : p for d in sub_dir_path_list for p in (d / "anat").iterdir()}
     sub_func_nii_path_dict = {d.name : p for d in sub_dir_path_list for p in (d / "func").iterdir()}
@@ -315,7 +316,7 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
     participants_tsv_path = dir_path / "participants.tsv"
     assert participants_tsv_path.exists(), f"{participants_tsv_path.absolute()} does not exist!"
     participants_info = pd.read_csv(participants_tsv_path, sep='\t')
-    sub_dir_path_list = [d for d in dir_path.iterdir() if d.is_dir()]
+    sub_dir_path_list = [d for d in dir_path.iterdir() if d.is_dir()and d.name.startswith('sub-')]
     assert len(sub_dir_path_list) == len(participants_info), f"len(sub_dir_path_list)={len(sub_dir_path_list)} != len(participants_info)={len(participants_info)}"
     
     for d in sub_dir_path_list:
@@ -492,8 +493,8 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
             np.savez_compressed(npz_path, **data)
 
 def main() -> None:
-    process_ds002748()
-    # process_ds003007()
+    # process_ds002748()
+    process_ds003007()
     # TODO
     # process_Cambridge()
     # process_rest_meta_mdd()

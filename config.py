@@ -23,7 +23,7 @@ class Train_Config:
     shuffle: bool = False
     batch_size: int = 24
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(300)
+    epochs: range = range(100)
     lr: float = 2e-5 # 1e-4 is not good, 2e-5 is better than 1e-5 and 5e-5
     latent_embedding_dim: int = 512
     
