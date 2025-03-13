@@ -58,7 +58,7 @@ def load_atlas() -> dict[str, list[str]]:
 # class Dataset_Mild_Depression(Dataset):
 #     def __init__(self, md_path_list : list[Path], hc_path_list : list[Path]) -> None:
 #         super().__init__()
-#         self.path_list = [] # [(dir_path, tag), ...]; tag, 0: health controls, 1: mild depression
+#         self.path_list = [] # [(dir_path, target), ...]; target, 0: health controls, 1: mild depression
 #         max_len = max([len(md_path_list), len(hc_path_list)])
 #         for i in range(max_len):
 #             if i < len(md_path_list):
@@ -72,7 +72,7 @@ def load_atlas() -> dict[str, list[str]]:
 #         return path_list[0]
     
 #     def __getitem__(self, idx) -> tuple[dict, int]:
-#         dir_path, tag = self.path_list[idx]
+#         dir_path, target = self.path_list[idx]
 
 #         # denoised_anat
 #         denoised_anat_path = self.__get_the_only_file_in_dir__(dir_path, "denoised_anat.nii.gz")
@@ -197,8 +197,8 @@ class Dataset_Major_Depression(Dataset):
         # Auxiliary information
         auxi_info = path_dict["auxi_info"]
         ID = auxi_info["ID"]
-        tag = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
-        assert tag is not None, f"Unknown tag in ID: {ID}"
+        target = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
+        assert target is not None, f"Unknown target in ID: {ID}"
         to_tensor = partial(torch.tensor, dtype=torch.float32)
         processed_auxi_info = {}
         for attribute in ["Sex", "Age", "Education (years)"]:
@@ -231,10 +231,10 @@ class Dataset_Major_Depression(Dataset):
             matrix = np.clip(matrix, 0, 1)
             vbm_matrices[group_name] = to_tensor(matrix)
 
-        # tag
-        tag = to_tensor(tag)
+        # target
+        target = to_tensor(target)
 
-        return processed_auxi_info, fc_matrices, vbm_matrices, tag
+        return processed_auxi_info, fc_matrices, vbm_matrices, target
 
     def __len__(self) -> int:
         return len(self.path_list)
@@ -286,7 +286,7 @@ class KFold_Major_Depression:
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
-        # REST-meta-MDD: "SiteID-Tag-SubjectID"
+        # REST-meta-MDD: "SiteID-target-SubjectID"
         subj_list = list(self.paths_dict.keys())
         random.shuffle(subj_list)
         fold = 1

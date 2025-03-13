@@ -9,8 +9,8 @@ from collections import defaultdict
 
 from metrics import Metrics
 from config import Train_Config, seed
-from models import device, MGD4MD, get_GPU_memory_usage
 from dataset import get_major_dataloader_via_fold
+from models import device, MGD4MD, get_GPU_memory_usage
 
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)  
@@ -56,19 +56,19 @@ def train(device : torch.device,
     model.train()
     train_loss_list = []
     mem_reserved_list = []
-    for auxi_info, fc_matrices, vbm_matrices, tag in tqdm(dataloader, desc="Training", leave=True):
+    for auxi_info, fc_matrices, vbm_matrices, target in tqdm(dataloader, desc="Training", leave=True):
         # move to GPU
         auxi_info = move_to_device(auxi_info, device)
         fc_matrices = move_to_device(fc_matrices, device)
         vbm_matrices = move_to_device(vbm_matrices, device)
-        tag = move_to_device(tag, device)
+        target = move_to_device(target, device)
         # forward
         output =  model(structural_input_dict=vbm_matrices,
                         functional_input_dict=fc_matrices,
                         information_input_dict=auxi_info)
-        tag = nn.functional.one_hot(tag.long(), num_classes=2).float()
+        target = nn.functional.one_hot(target.long(), num_classes=2).float()
         # loss
-        loss = loss_fn(output, tag)
+        loss = loss_fn(output, target)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
         train_loss_list.append(loss.item())
         # 3 steps of back propagation
@@ -87,43 +87,43 @@ def test(device : torch.device,
          is_valid : bool = False,
          log_epoch : int = -1) -> dict[str, float]:
     model.eval()
-    tag_list = []
+    target_list = []
     prediction_list = []
     probability_list = []
     with torch.no_grad():
         desc = "Validating" if is_valid else "Testing"
-        for auxi_info, fc_matrices, vbm_matrices, tag in tqdm(dataloader, desc=desc, leave=True):
+        for auxi_info, fc_matrices, vbm_matrices, target in tqdm(dataloader, desc=desc, leave=True):
             # move to GPU
             auxi_info = move_to_device(auxi_info, device)
             fc_matrices = move_to_device(fc_matrices, device)
             vbm_matrices = move_to_device(vbm_matrices, device)
             # forward
             output =  model(structural_input_dict=vbm_matrices,
-                                functional_input_dict=fc_matrices,
-                                information_input_dict=auxi_info)
+                            functional_input_dict=fc_matrices,
+                            information_input_dict=auxi_info)
             probability = output[:, -1]
             prediction = output.argmax(dim=1)
-            tag_list.extend(tag.numpy())
+            target_list.extend(target.numpy())
             prediction_list.extend(prediction.cpu().numpy())
             probability_list.extend(probability.cpu().numpy())
     
-    tag = np.array(tag_list).astype(int)
+    target = np.array(target_list).astype(int)
     probability = np.array(probability_list).astype(float)
     prediction = np.array(prediction_list).astype(int)
-    assert tag.shape == probability.shape == prediction.shape, f"{tag.shape} != {probability.shape} != {prediction.shape}"
+    assert target.shape == probability.shape == prediction.shape, f"{target.shape} != {probability.shape} != {prediction.shape}"
     metrices = {
-        "AUC" : Metrics.AUC(prob=probability, true=tag),
-        "ACC" : Metrics.ACC(pred=prediction, true=tag),
-        "PRE" : Metrics.PRE(pred=prediction, true=tag),
-        "SEN" : Metrics.SEN(pred=prediction, true=tag),
-        "F1S" : Metrics.F1S(pred=prediction, true=tag)
+        "AUC" : Metrics.AUC(prob=probability, true=target),
+        "ACC" : Metrics.ACC(pred=prediction, true=target),
+        "PRE" : Metrics.PRE(pred=prediction, true=target),
+        "SEN" : Metrics.SEN(pred=prediction, true=target),
+        "F1S" : Metrics.F1S(pred=prediction, true=target)
     }
     metrices = {k : float(v) for k, v in metrices.items()}
 
     if log_epoch >= 0:
         with open(f"epoch_{log_epoch}.txt", "w") as f:
-            f.write(f"tag\t\tprobability\t\tprediction\n")
-            for t, p, pred in zip(tag, probability, prediction):
+            f.write(f"target\t\tprobability\t\tprediction\n")
+            for t, p, pred in zip(target, probability, prediction):
                 f.write(f"{t}\t\t{p:.4f}\t\t{pred}\n")
 
     return metrices
@@ -135,13 +135,14 @@ def main() -> None:
         train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
         
         # Shape
-        auxi_info, fc_matrices, vbm_matrices, tag = next(iter(test_dataloader))
+        auxi_info, fc_matrices, vbm_matrices, target = next(iter(test_dataloader))
 
         # Model
         model = MGD4MD(auxi_info_number=len(auxi_info),
                        functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
                        structural_matrices_shape={k:v.shape[1:] for k,v in vbm_matrices.items()},
-                       embedding_dim=Train_Config.latent_embedding_dim).to(device)
+                       embedding_dim=Train_Config.latent_embedding_dim,
+                       use_lgd=Train_Config.use_lgd).to(device)
         trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
         with open("model_structure.txt", "w") as f:  
@@ -171,6 +172,8 @@ def main() -> None:
         metrics = test(device=device, model=model, dataloader=test_dataloader)
         with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=4, ensure_ascii=False)
+        
+        break
 
     # Write all results
     results = defaultdict(dict)

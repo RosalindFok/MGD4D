@@ -35,7 +35,6 @@ pip install nilearn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 pip install tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed tqdm-4.67.1
 pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed contourpy-1.3.1 cycler-0.12.1 fonttools-4.55.8 kiwisolver-1.4.8 matplotlib-3.10.0 pyparsing-3.2.1
 
-
 # script
 chmod 777 *.sh
 sbatch --gpus=1 -p gpu run_MGD4MD.sh # submit the job, MGD4MD

@@ -150,7 +150,8 @@ class LatentGraphDiffusion(nn.Module):
         # time
         self.time_mlp = nn.Sequential(  
             nn.Linear(embedding_dim, embedding_dim * 4),  
-            nn.GELU(),  
+            # nn.GELU(),  
+            nn.ReLU(),
             nn.Linear(embedding_dim * 4, embedding_dim)  
         )  
 
@@ -262,12 +263,14 @@ class LatentGraphDiffusion(nn.Module):
 
     def forward_chain(self, x_0 : torch.Tensor, t : torch.Tensor, noise : torch.Tensor) -> torch.Tensor:
         """
-        foward chain: perturbs data to noise,      which is called `q_sample` in `DDPM`
+        foward chain: perturbs data to noise, which is called `q_sample` in `DDPM`
         """
         # x_t = sqrt(α_t) * x_0 + sqrt(1 - α_t) * ε
-        x_t = self.__extract_into_tensor__(a=self.sqrt_alphas_cumprod, t=t, x_shape=x_0.shape) * x_0 + self.__extract_into_tensor__(a=self.sqrt_one_minus_alphas_cumprod, t=t, x_shape=x_0.shape) * noise
+        sqrt_alphas_cumprod_t = self.__extract_into_tensor__(a=self.sqrt_alphas_cumprod, t=t, x_shape=x_0.shape)
+        sqrt_one_minus_alphas_cumprod_t  = self.__extract_into_tensor__(a=self.sqrt_one_minus_alphas_cumprod, t=t, x_shape=x_0.shape)
+        x_t = sqrt_alphas_cumprod_t * x_0 + sqrt_one_minus_alphas_cumprod_t * noise
         return x_t
-    
+
     def reverse_chain(self, noisy_embeddings_dict : dict[str, dict[str, torch.Tensor]], t : torch.Tensor) -> dict[str, dict[str, torch.Tensor]]:
         """
         reverse chain: converts noise back to data, which is called `p_sample` in `DDPM`
@@ -320,19 +323,20 @@ class LatentGraphDiffusion(nn.Module):
         
         return weighted_embeddings_dict # TODO scores_dict and attention_weights
 
-    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
+    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> tuple[dict[str, dict[str, torch.Tensor]], torch.Tensor, torch.Tensor]:
         tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))
         # t: time steps in the diffusion process
         # randomly generate a time step t, i.e., directly sample the t-th step; there is no need to use 'for t in range(T)' to accumulate.
         t = torch.randint(0, self.num_timesteps, (tensor.shape[0],), device=tensor.device).long()
-        noisy_embeddings_dict = {}
+        noisy_embeddings_dict = defaultdict(dict)
+        noise_dict = defaultdict(dict)
         for modal, embeddings_dict in latent_embeddings_dict.items():
-            noisy_embeddings_dict[modal] = {}
             for key, x_0 in embeddings_dict.items():
                 noise = torch.randn_like(x_0)
                 # forward chaimn
                 x_t = self.forward_chain(x_0=x_0, t=t, noise=noise)
                 noisy_embeddings_dict[modal][key] = x_t
+                noise_dict[modal][key] = noise
         
         # reverse chain
         output_embeddings_dict = self.reverse_chain(noisy_embeddings_dict=noisy_embeddings_dict, t=t)
@@ -413,12 +417,11 @@ class MGD4MD(nn.Module):
         
         # latent graph diffusion
         latent_embeddings_dict = {"structural"  : structural_embeddings_dict, 
-                                 "functional"   : functional_embeddings_dict}
+                                  "functional"   : functional_embeddings_dict}
         if self.use_lgd:
             latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
-      
+       
         # decode
         output = self.decoder(latent_embeddings_dict, information_embedding_dict)
 
         return output
-

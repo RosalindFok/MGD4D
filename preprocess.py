@@ -361,12 +361,12 @@ def process_ds003007(dir_path : Path = Paths.Depression.ds003007_dir_path,
 
 def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
                       saved_root_dir_path : Path  = Paths.Run_Files.run_files_cambridge_dir_path) -> None:
-    assert dir_path.exists(), f"{dir_path} does not exist"
+    assert dir_path.root_dir.exists(), f"{dir_path.root_dir} does not exist"
     # read demographics
     participants_info = {} # {sub_name : {age, gender}}
     with dir_path.demographics_txt_path.open('r') as f: 
         content = [line.split("\t") for line in f.read().splitlines()] # [[sub_name, index, age, gender], ...]
-        for line in content:
+        for line in content: # line is a list of [sub_id, idx, age, gender]
             participants_info[line[0]] = {'age' : int(line[2]), 'gender' : Gender.FEMALE if line[3] == 'f' else Gender.MALE}
     
     for part_dir_path in dir_path.root_dir.iterdir():
@@ -381,9 +381,6 @@ def process_Cambridge(dir_path : Path = Paths.Functional_Connectomes_1000,
                                                         anat3d_path=sub_dir_path / "anat" / "mprage_skullstripped.nii.gz", 
                                                         func4d_path=sub_dir_path / "func" / "rest.nii.gz",
                                                         atlas_path=Paths.Atlas.Brainnetome.BN_Atlas_246_1mm_nii_path)   
-                
-        # TODO sub01361 有明显异常，需要检查
-            
 
 def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_path,
                           saved_root_dir_path : Path  = Paths.Run_Files.run_files_rest_meta_mdd_dir_path) -> None:
@@ -493,11 +490,10 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
             np.savez_compressed(npz_path, **data)
 
 def main() -> None:
-    # process_ds002748()
+    process_ds002748()
     process_ds003007()
-    # TODO
-    # process_Cambridge()
-    # process_rest_meta_mdd()
+    process_Cambridge()
+    process_rest_meta_mdd()
 
 if __name__ == "__main__":
     main()

@@ -26,6 +26,7 @@ class Train_Config:
     epochs: range = range(100)
     lr: float = 2e-5 # 1e-4 is not good, 2e-5 is better than 1e-5 and 5e-5
     latent_embedding_dim: int = 512
+    use_lgd: bool = True
     
 # Brain network
 @dataclass(frozen=True)
