@@ -150,7 +150,6 @@ class LatentGraphDiffusion(nn.Module):
         # time
         self.time_mlp = nn.Sequential(  
             nn.Linear(embedding_dim, embedding_dim * 4),  
-            # nn.GELU(),  
             nn.ReLU(),
             nn.Linear(embedding_dim * 4, embedding_dim)  
         )  
@@ -326,7 +325,7 @@ class LatentGraphDiffusion(nn.Module):
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> tuple[dict[str, dict[str, torch.Tensor]], torch.Tensor, torch.Tensor]:
         tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))
         # t: time steps in the diffusion process
-        # randomly generate a time step t, i.e., directly sample the t-th step; there is no need to use 'for t in range(T)' to accumulate.
+        # randomly generate a time step t, i.e., directly sample the t-th step of T steps; there is no need to use 'for t in range(T)' to accumulate.
         t = torch.randint(0, self.num_timesteps, (tensor.shape[0],), device=tensor.device).long()
         noisy_embeddings_dict = defaultdict(dict)
         noise_dict = defaultdict(dict)
