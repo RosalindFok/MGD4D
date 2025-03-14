@@ -35,6 +35,9 @@ pip install nilearn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 pip install tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed tqdm-4.67.1
 pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed contourpy-1.3.1 cycler-0.12.1 fonttools-4.55.8 kiwisolver-1.4.8 matplotlib-3.10.0 pyparsing-3.2.1
 
+# dependencies for baselines
+
+
 # script
 chmod 777 *.sh
 sbatch --gpus=1 -p gpu run_MGD4MD.sh # submit the job, MGD4MD
@@ -68,9 +71,6 @@ No official code
 > J. Xu et al., "Contrastive Graph Pooling for Explainable Classification of Brain Networks," in IEEE Transactions on Medical Imaging, vol. 43, no. 9, pp. 3292-3305, Sept. 2024, doi: 10.1109/TMI.2024.3392988.
 
 [Official Code](https://github.com/AngusMonroe/ContrastPool)
-
-source activate contrastpool
-服务器上缺OSError: /lib64/libm.so.6: version `GLIBC_2.27'
 
 ## MGD4MD
 ### Results of different hyperparameter combinations

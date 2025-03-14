@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
+from pathlib import Path
 from collections import defaultdict
 
 from models import device
@@ -98,32 +99,5 @@ if __name__ == '__main__':
     
     elif args.model == "ContrasPool":
         """ContrasPool: https://doi.org/10.1109/TMI.2024.3392988"""
-        # --node_feat_transform pearson 
-        # --max_time 60 
-        # --init_lr 1e-2 
-        # --threshold 0.0 
-        # --batch_size 20 
-        # --dropout 0.0 
-        # --contrast 
-        # --pool_ratio 0.5 
-        # --lambda1 1e-3 --L 2
         # https://github.com/AngusMonroe/ContrastPool/blob/main/configs/abide_schaefer100/TUs_graph_classification_ContrastPool_abide_schaefer100_100k.json
-        from pathlib import Path
-        from baselines.ContrastPool.nets.load_net import gnn_model
-        json_path = Path("baselines") / "ContrastPool" / "configs" / "abide_schaefer100" / "TUs_graph_classification_ContrastPool_abide_schaefer100_100k.json"
-        assert json_path.exists(), f"{json_path} does not exist."
-        with open(json_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-        model = gnn_model(MODEL_NAME=config["model"], net_params=config["net_params"]).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=config["params"]["init_lr"], weight_decay=config["params"]["weight_decay"])
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=config["params"]["lr_reduce_factor"],
-                                                               patience=config["params"]["lr_reduce_patience"], verbose=True)
         
-        for fold in Train_Config.n_splits: # other dataset were used in ContrasPool
-            return_dataloaders = get_major_dataloader_via_fold(fold=fold, batch_size=config["params"]["batch_size"])
-            train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
-            for epoch in range(config["params"]["epochs"]):
-                # train
-                model.train()
-                for _, fc_matrices, _, tag in tqdm(train_dataloader, desc="Train", leave=True):
-                    pass
