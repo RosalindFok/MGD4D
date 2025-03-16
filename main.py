@@ -1,3 +1,4 @@
+import csv
 import json
 import torch
 import numpy as np
@@ -9,9 +10,11 @@ from collections import defaultdict
 
 from metrics import Metrics
 from config import Train_Config, seed
+from plot import plot_confusion_matrix
 from dataset import get_major_dataloader_via_fold
 from models import device, MGD4MD, get_GPU_memory_usage
 
+np.random.seed(seed)
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)  
 
@@ -56,12 +59,12 @@ def train(device : torch.device,
     model.train()
     train_loss_list = []
     mem_reserved_list = []
-    for auxi_info, fc_matrices, vbm_matrices, target in tqdm(dataloader, desc="Training", leave=True):
+    for batches in tqdm(dataloader, desc="Training", leave=True):
         # move to GPU
-        auxi_info = move_to_device(auxi_info, device)
-        fc_matrices = move_to_device(fc_matrices, device)
-        vbm_matrices = move_to_device(vbm_matrices, device)
-        target = move_to_device(target, device)
+        auxi_info = move_to_device(batches.info, device)
+        fc_matrices = move_to_device(batches.fc, device)
+        vbm_matrices = move_to_device(batches.vbm, device)
+        target = move_to_device(batches.target, device)
         # forward
         output =  model(structural_input_dict=vbm_matrices,
                         functional_input_dict=fc_matrices,
@@ -87,25 +90,27 @@ def test(device : torch.device,
          is_valid : bool = False,
          log_epoch : int = -1) -> dict[str, float]:
     model.eval()
+    subjid_list = []
     target_list = []
     prediction_list = []
     probability_list = []
     with torch.no_grad():
         desc = "Validating" if is_valid else "Testing"
-        for auxi_info, fc_matrices, vbm_matrices, target in tqdm(dataloader, desc=desc, leave=True):
+        for batches in tqdm(dataloader, desc=desc, leave=True):
             # move to GPU
-            auxi_info = move_to_device(auxi_info, device)
-            fc_matrices = move_to_device(fc_matrices, device)
-            vbm_matrices = move_to_device(vbm_matrices, device)
+            auxi_info = move_to_device(batches.info, device)
+            fc_matrices = move_to_device(batches.fc, device)
+            vbm_matrices = move_to_device(batches.vbm, device)
             # forward
             output =  model(structural_input_dict=vbm_matrices,
                             functional_input_dict=fc_matrices,
                             information_input_dict=auxi_info)
             probability = output[:, -1]
             prediction = output.argmax(dim=1)
-            target_list.extend(target.numpy())
+            target_list.extend(batches.target.numpy())
             prediction_list.extend(prediction.cpu().numpy())
             probability_list.extend(probability.cpu().numpy())
+            subjid_list.extend(batches.id)
     
     target = np.array(target_list).astype(int)
     probability = np.array(probability_list).astype(float)
@@ -121,11 +126,12 @@ def test(device : torch.device,
     metrices = {k : float(v) for k, v in metrices.items()}
 
     if log_epoch >= 0:
-        with open(f"epoch_{log_epoch}.txt", "w") as f:
-            f.write(f"target\t\tprobability\t\tprediction\n")
-            for t, p, pred in zip(target, probability, prediction):
-                f.write(f"{t}\t\t{p:.4f}\t\t{pred}\n")
-
+        plot_confusion_matrix(target, prediction, saved_path=f"epoch_{log_epoch}_confusion_matrix.png")
+        with open(f"epoch_{log_epoch}_valid_results.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Subject", "True Label", "Probability", "Predicted Label"])
+            for id, true, prob, pred in zip(subjid_list, target, probability, prediction):
+                writer.writerow([id, true, f"{prob:.6f}", pred])
     return metrices
 
 def main() -> None:
@@ -135,7 +141,9 @@ def main() -> None:
         train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
         
         # Shape
-        auxi_info, fc_matrices, vbm_matrices, target = next(iter(test_dataloader))
+        auxi_info = next(iter(test_dataloader)).info
+        fc_matrices = next(iter(test_dataloader)).fc
+        vbm_matrices = next(iter(test_dataloader)).vbm
 
         # Model
         model = MGD4MD(auxi_info_number=len(auxi_info),
@@ -164,7 +172,8 @@ def main() -> None:
             train_returns = train(device=device, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader)
             print(f"Train loss: {train_returns.train_loss}, GPU memory usage: {train_returns.reserved_memory:.2f}GB / {train_returns.total_memory:.2f}GB")
             # Valid
-            metrics = test(device=device, model=model, dataloader=test_dataloader, is_valid=True)
+            metrics = test(device=device, model=model, dataloader=test_dataloader, 
+                           is_valid=True, log_epoch=epoch+1)
             print(metrics)
     
         # Test

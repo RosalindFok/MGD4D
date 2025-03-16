@@ -34,8 +34,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install nilearn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed certifi-2025.1.31 charset-normalizer-3.4.1 idna-3.10 importlib-resources-6.5.2 joblib-1.4.2 lxml-5.3.0 nibabel-5.3.2 nilearn-0.11.1 packaging-24.2 pandas-2.2.3 python-dateutil-2.9.0.post0 pytz-2025.1 requests-2.32.3 scikit-learn-1.6.1 scipy-1.15.1 six-1.17.0 threadpoolctl-3.5.0 tzdata-2025.1 urllib3-2.3.0
 pip install tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed tqdm-4.67.1
 pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed contourpy-1.3.1 cycler-0.12.1 fonttools-4.55.8 kiwisolver-1.4.8 matplotlib-3.10.0 pyparsing-3.2.1
-
-# dependencies for baselines
+pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed seaborn-0.13.2
 
 
 # script

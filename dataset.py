@@ -10,8 +10,8 @@ from pathlib import Path
 from scipy.io import loadmat  
 from functools import partial
 from dataclasses import dataclass
-from collections import defaultdict
 from sklearn.model_selection import KFold
+from collections import namedtuple, defaultdict 
 from torch.utils.data import Dataset, DataLoader
 torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "RuntimeError: unable to open shared memory object </torch_54907_2465325546_996> in read-write mode: Too many open files (24)"
 
@@ -164,6 +164,9 @@ def load_atlas() -> dict[str, list[str]]:
 #         assert fold in kfold_md_dir_paths.keys(), f"Unknown fold: {fold}, available folds: {kfold_md_dir_paths.keys()}"
 #         Dataset_Mild_Depression(md_path_list=kfold_md_dir_paths[fold]["train"], hc_path_list=kfold_hc_dir_paths[fold]["train"])
 
+# dataclass is not used because dict[tensor] is not supported by PyTorch
+MDD_Returns = namedtuple("MDD_Returns", ["id", "info", "fc", "vbm", "target"]) 
+
 class Dataset_Major_Depression(Dataset):
     def __init__(self, path_list : list[dict[str, Any]], 
                        auxi_values : dict[str, dict[str, float]],
@@ -191,7 +194,7 @@ class Dataset_Major_Depression(Dataset):
             raise ValueError(f"Unknown brain network name: {self.brain_network_name}")
         return output_dict
         
-    def __getitem__(self, index) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], 
+    def __getitem__(self, index) -> tuple[str, dict[str, torch.Tensor], dict[str, torch.Tensor], 
                                           dict[str, torch.Tensor], int]:
         path_dict = self.path_list[index]
         # Auxiliary information
@@ -234,7 +237,10 @@ class Dataset_Major_Depression(Dataset):
         # target
         target = to_tensor(target)
 
-        return processed_auxi_info, fc_matrices, vbm_matrices, target
+        return MDD_Returns(
+            id=ID, info=processed_auxi_info, fc=fc_matrices, 
+            vbm=vbm_matrices, target=target
+        )
 
     def __len__(self) -> int:
         return len(self.path_list)
@@ -263,12 +269,14 @@ class KFold_Major_Depression:
         # Functional connectivity
         fc_path_dict = {} 
         for sub_dir_path in tqdm(list((rest_meta_mdd_dir_path / dir_name).iterdir()), desc=f"Loading {dir_name}", leave=True):
-            fc_matrix_path = [x for x in sub_dir_path.glob("*.npz")]
-            assert len(fc_matrix_path) == 1, f"Multiple or no fc matrix found in {sub_dir_path}"
+            fc_matrix_path = [x for x in sub_dir_path.glob("fc_matrix.npz")]
             fc_path_dict[sub_dir_path.name] = fc_matrix_path[0]
 
         # VBM
-        vbm_path_dict = {path.stem.split(".")[0] : path for path in list((rest_meta_mdd_dir_path / "VBM").iterdir())}
+        vbm_path_dict = {}
+        for path in list((rest_meta_mdd_dir_path / "VBM").iterdir()):
+            if not "_augmented" in path.name:
+                vbm_path_dict[path.stem.split(".")[0]] = path
         
         assert len(auxi_info)==len(fc_path_dict)==len(vbm_path_dict), f"Length mismatch: {len(auxi_info)} != {len(fc_path_dict)} != {len(vbm_path_dict)}"
         
@@ -284,6 +292,37 @@ class KFold_Major_Depression:
         # K Fold
         self.kf = KFold(n_splits=Train_Config.n_splits.stop-1, shuffle=Train_Config.shuffle)
 
+    # def __data_augmentation__(self, train_list : list[dict[str, Any]]) -> list[dict[str, Any]]:
+    #     new_list = []
+    #     for path_dict in tqdm(train_list, desc="Data augmentation", leave=True):
+    #         # functional connectivity: add noise 
+    #         augmented_fc_path = path_dict["fc"].parent / f"{path_dict['fc'].stem}_augmented.npz"
+    #         if not augmented_fc_path.exists():
+    #             fc_matrix = np.load(path_dict["fc"], allow_pickle=True)
+    #             augmented_fc_dict = {}
+    #             for key,value in fc_matrix.items():
+    #                 noise = np.random.normal(0, 0.01, value.shape)
+    #                 noise = (noise + noise.T) / 2
+    #                 augmented_fc_dict[key] = value + noise
+    #             np.savez(augmented_fc_path, **augmented_fc_dict)
+    #         # VBM: add noise  (rotate 90 degrees)
+    #         augmented_vbm_path = path_dict["vbm"].parent / f"{path_dict['vbm'].stem}_augmented.npz"
+    #         if not augmented_vbm_path.exists():
+    #             vbm_matrix = np.load(path_dict["vbm"], allow_pickle=True)
+    #             augmented_vbm_dict = {}
+    #             for key,value in vbm_matrix.items():
+    #                 # augmented_vbm_dict[key] = np.rot90(value, axes=(0, 2))
+    #                 noise = np.random.normal(0, 0.01, value.shape)
+    #                 augmented_vbm_dict[key] = value + noise
+    #                 assert value.shape == augmented_vbm_dict[key].shape, f"Shape mismatch: {value.shape}!= {augmented_vbm_dict[key].shape}"
+    #             np.savez(augmented_vbm_path, **augmented_vbm_dict)
+    #         # new_path_dict
+    #         new_list.append({"auxi_info" : path_dict["auxi_info"],
+    #                          "fc"        : augmented_fc_path,
+    #                          "vbm"       : augmented_vbm_path})
+    #     assert len(new_list) == len(train_list), f"Length mismatch: {len(new_list)}!= {len(train_list)}"
+    #     return train_list + new_list
+
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
         # REST-meta-MDD: "SiteID-target-SubjectID"
@@ -293,6 +332,7 @@ class KFold_Major_Depression:
         for train_index, test_index in self.kf.split(subj_list):
             kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
                                      "test"  : [self.paths_dict[subj_list[i]] for i in test_index]}
+            # kfold_dir_paths[fold]["train"] = self.__data_augmentation__(kfold_dir_paths[fold]["train"])
             fold += 1
         return kfold_dir_paths
 
