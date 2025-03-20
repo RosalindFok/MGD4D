@@ -9,11 +9,10 @@ Platform: Windows11, Python 3.11.4
 pip3 install numpy
 pip install antspyx
 pip install nibabel
-pip install pandas
 pip install tqdm
-pip install matplotlib
 pip install nilearn
-
+pip install seaborn
+pip install openpyxl
 # script
 python preprocess.py
 ```
@@ -24,8 +23,7 @@ Platform: Beijing Super Cloud Computing Center - N32EA14P: `NVIDIA A100-PCIE-40G
 
 ``` shell
 # conda enviorment
-module load cuda/12.1 # N32EA14P
-module load miniforge # N32EA14P
+module load cuda/12.1 miniforge  # N32EA14P
 conda create --name MGD4MD python=3.11
 source activate MGD4MD
 

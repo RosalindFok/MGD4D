@@ -15,14 +15,14 @@ class Metrics:
     @staticmethod
     def PRE(pred : np.ndarray, true : np.ndarray) -> float:
         assert pred.shape == true.shape, f"pred.shape {pred.shape} != true.shape {true.shape}"
-        return precision_score(true, pred)
+        return precision_score(true, pred, zero_division=0)
 
     @staticmethod
     def SEN(pred : np.ndarray, true : np.ndarray) -> float:
         assert pred.shape == true.shape, f"pred.shape {pred.shape} != true.shape {true.shape}"
-        return recall_score(true, pred)
+        return recall_score(true, pred, zero_division=0)
 
     @staticmethod
     def F1S(pred : np.ndarray, true : np.ndarray) -> float:
         assert pred.shape == true.shape, f"pred.shape {pred.shape} != true.shape {true.shape}"
-        return f1_score(true, pred)
+        return f1_score(true, pred, zero_division=0)

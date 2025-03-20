@@ -452,6 +452,10 @@ def process_rest_meta_mdd(dir_path : Path = Paths.Depression.REST_meta_MDD_dir_p
                 }           
 
                 fc_matrices_path = saved_dir_path / f"fc_matrix.npz"
+                # # check ROI that is all 0
+                # for atlas_name, time_series in time_series_pair.items():
+                #     cnt_roi = np.sum(np.all(time_series==0, axis=0))
+                
                 if not fc_matrices_path.exists():
                     fc_matrices = {}
                     for atlas_name, time_series in time_series_pair.items():

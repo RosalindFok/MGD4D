@@ -1,3 +1,4 @@
+import gc
 import csv
 import json
 import torch
@@ -11,7 +12,7 @@ from collections import defaultdict
 from metrics import Metrics
 from config import Train_Config, seed
 from plot import plot_confusion_matrix
-from dataset import get_major_dataloader_via_fold
+from dataset import kfold_major_depression
 from models import device, MGD4MD, get_GPU_memory_usage
 
 np.random.seed(seed)
@@ -70,6 +71,7 @@ def train(device : torch.device,
                         functional_input_dict=fc_matrices,
                         information_input_dict=auxi_info)
         target = nn.functional.one_hot(target.long(), num_classes=2).float()
+        # target = target.float()
         # loss
         loss = loss_fn(output, target)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
@@ -107,6 +109,8 @@ def test(device : torch.device,
                             information_input_dict=auxi_info)
             probability = output[:, -1]
             prediction = output.argmax(dim=1)
+            # probability = output.flatten()
+            # prediction = (probability >= 0.5).long()
             target_list.extend(batches.target.numpy())
             prediction_list.extend(prediction.cpu().numpy())
             probability_list.extend(probability.cpu().numpy())
@@ -137,9 +141,9 @@ def test(device : torch.device,
 def main() -> None:
     test_results = defaultdict(list)
     for fold in Train_Config.n_splits:
-        return_dataloaders = get_major_dataloader_via_fold(fold)
+        return_dataloaders = kfold_major_depression.get_dataloader_via_fold(fold)
         train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
-        
+
         # Shape
         auxi_info = next(iter(test_dataloader)).info
         fc_matrices = next(iter(test_dataloader)).fc
@@ -164,6 +168,7 @@ def main() -> None:
 
         for epoch in Train_Config.epochs:
             lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
+            lr = max(lr, Train_Config.lr*0.1)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
 
@@ -175,14 +180,14 @@ def main() -> None:
             metrics = test(device=device, model=model, dataloader=test_dataloader, 
                            is_valid=True, log_epoch=epoch+1)
             print(metrics)
-    
+            
         # Test
         print("Test")
         metrics = test(device=device, model=model, dataloader=test_dataloader)
         with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=4, ensure_ascii=False)
-        
-        break
+        for key, value in metrics.items():
+            test_results[key].append(value)
 
     # Write all results
     results = defaultdict(dict)

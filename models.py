@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import torch.nn as nn  
+from typing import Any
 from functools import partial
 from collections import defaultdict 
 
@@ -364,6 +365,8 @@ class Decoder(nn.Module):
             self.tanh, 
             nn.Linear(in_features=64, out_features=2),
             nn.Softmax(dim=-1)
+            # nn.Linear(in_features=64, out_features=1),
+            # nn.Sigmoid()
         )
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]], 
@@ -373,8 +376,8 @@ class Decoder(nn.Module):
         assert len(information_embedding) == 1 #
         information_embedding = information_embedding[0]
 
-        for _, features in latent_embeddings_dict.items():
-            for _, tensor in features.items():
+        for _, value in latent_embeddings_dict.items():
+            for _, tensor in value.items():
                 concatenated_embeddings_list.append(tensor)
         embeddings = torch.stack(concatenated_embeddings_list, dim=1) # shape=[batchsize, features_number, embedding_dim]
         embeddings = self.decode_1(embeddings)
@@ -399,12 +402,22 @@ class MGD4MD(nn.Module):
         # LatentGraphDiffusion
         if self.use_lgd:
             self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, 
-                                        features_number=len(structural_matrices_shape)+len(functional_embeddings_shape))
+                                            features_number=len(structural_matrices_shape)+len(functional_embeddings_shape))
 
         # Decoder
         self.decoder = Decoder(auxi_info_number=auxi_info_number, 
                                features_number=len(structural_matrices_shape)+len(functional_embeddings_shape),
                                embedding_dim=embedding_dim)
+
+    def __clone_tensor_dict__(self, d : Any) -> Any:  
+        if isinstance(d, torch.Tensor):  
+            return d.clone() 
+        elif isinstance(d, dict):  
+            return {k: self.__clone_tensor_dict__(v) for k, v in d.items()}  
+        elif isinstance(d, list):  
+            return [self.__clone_tensor_dict__(v) for v in d]  
+        else:  
+            return d
 
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
                       functional_input_dict : dict[str, torch.Tensor], 
@@ -414,12 +427,17 @@ class MGD4MD(nn.Module):
         functional_embeddings_dict = self.encoder_f(functional_input_dict)
         information_embedding_dict = self.encoder_i(information_input_dict) 
         
-        # latent graph diffusion
         latent_embeddings_dict = {"structural"  : structural_embeddings_dict, 
                                   "functional"   : functional_embeddings_dict}
+        # latent graph diffusion
         if self.use_lgd:
+            original_embeddings_dict = self.__clone_tensor_dict__(latent_embeddings_dict)  
             latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
-       
+            for modal, value in latent_embeddings_dict.items():
+                for key, tensor in value.items():
+                    assert tensor.shape == original_embeddings_dict[modal][key].shape, f"{tensor.shape} != {original_embeddings_dict[modal][key].shape}"
+                    latent_embeddings_dict[modal][key] = tensor + original_embeddings_dict[modal][key]
+        
         # decode
         output = self.decoder(latent_embeddings_dict, information_embedding_dict)
 

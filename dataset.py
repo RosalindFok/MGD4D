@@ -278,72 +278,83 @@ class KFold_Major_Depression:
             if not "_augmented" in path.name:
                 vbm_path_dict[path.stem.split(".")[0]] = path
         
-        assert len(auxi_info)==len(fc_path_dict)==len(vbm_path_dict), f"Length mismatch: {len(auxi_info)} != {len(fc_path_dict)} != {len(vbm_path_dict)}"
+        assert set(auxi_info.keys()) == set(fc_path_dict.keys()) == set(vbm_path_dict.keys()), f"Keys mismatch!" 
         
-        self.paths_dict = {}
-        for key, value in auxi_info.items():
-            assert key not in self.paths_dict.keys(), f"Duplicate key: {key}"
-            self.paths_dict[key] = {"auxi_info" : value}
-            assert key in fc_path_dict.keys(), f"Unknown key: {key}"
-            self.paths_dict[key]["fc"] = fc_path_dict[key]
-            assert key in vbm_path_dict.keys(), f"Unknown key: {key}"
-            self.paths_dict[key]["vbm"] = vbm_path_dict[key]
+        self.paths_dict = defaultdict(dict)
+        for sub_id in auxi_info.keys():
+            self.paths_dict[sub_id]["auxi_info"] = auxi_info[sub_id]
+            self.paths_dict[sub_id]["fc"] = fc_path_dict[sub_id]
+            self.paths_dict[sub_id]["vbm"] = vbm_path_dict[sub_id]
 
         # K Fold
         self.kf = KFold(n_splits=Train_Config.n_splits.stop-1, shuffle=Train_Config.shuffle)
-
-    # def __data_augmentation__(self, train_list : list[dict[str, Any]]) -> list[dict[str, Any]]:
-    #     new_list = []
-    #     for path_dict in tqdm(train_list, desc="Data augmentation", leave=True):
-    #         # functional connectivity: add noise 
-    #         augmented_fc_path = path_dict["fc"].parent / f"{path_dict['fc'].stem}_augmented.npz"
-    #         if not augmented_fc_path.exists():
-    #             fc_matrix = np.load(path_dict["fc"], allow_pickle=True)
-    #             augmented_fc_dict = {}
-    #             for key,value in fc_matrix.items():
-    #                 noise = np.random.normal(0, 0.01, value.shape)
-    #                 noise = (noise + noise.T) / 2
-    #                 augmented_fc_dict[key] = value + noise
-    #             np.savez(augmented_fc_path, **augmented_fc_dict)
-    #         # VBM: add noise  (rotate 90 degrees)
-    #         augmented_vbm_path = path_dict["vbm"].parent / f"{path_dict['vbm'].stem}_augmented.npz"
-    #         if not augmented_vbm_path.exists():
-    #             vbm_matrix = np.load(path_dict["vbm"], allow_pickle=True)
-    #             augmented_vbm_dict = {}
-    #             for key,value in vbm_matrix.items():
-    #                 # augmented_vbm_dict[key] = np.rot90(value, axes=(0, 2))
-    #                 noise = np.random.normal(0, 0.01, value.shape)
-    #                 augmented_vbm_dict[key] = value + noise
-    #                 assert value.shape == augmented_vbm_dict[key].shape, f"Shape mismatch: {value.shape}!= {augmented_vbm_dict[key].shape}"
-    #             np.savez(augmented_vbm_path, **augmented_vbm_dict)
-    #         # new_path_dict
-    #         new_list.append({"auxi_info" : path_dict["auxi_info"],
-    #                          "fc"        : augmented_fc_path,
-    #                          "vbm"       : augmented_vbm_path})
-    #     assert len(new_list) == len(train_list), f"Length mismatch: {len(new_list)}!= {len(train_list)}"
-    #     return train_list + new_list
+        self.kfold_dir_paths = self.__k_fold__()
+        
+    def __data_augmentation__(self, old_list : list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        new_dict = {}
+        for path_dict in tqdm(old_list, desc="Data augmentation", leave=True):
+            # functional connectivity: add noise 
+            augmented_fc_path = path_dict["fc"].parent / f"{path_dict['fc'].stem}_augmented.npz"
+            if not augmented_fc_path.exists():
+                fc_matrix = np.load(path_dict["fc"], allow_pickle=True)
+                augmented_fc_dict = {}
+                for key,value in fc_matrix.items():
+                    noise = np.random.normal(0, 0.01, value.shape)
+                    noise = (noise + noise.T) / 2
+                    augmented_fc_dict[key] = value + noise
+                np.savez(augmented_fc_path, **augmented_fc_dict)
+            # VBM: add noise  (not rotate 90 degrees)
+            augmented_vbm_path = path_dict["vbm"].parent / f"{path_dict['vbm'].stem}_augmented.npz"
+            if not augmented_vbm_path.exists():
+                vbm_matrix = np.load(path_dict["vbm"], allow_pickle=True)
+                augmented_vbm_dict = {}
+                for key,value in vbm_matrix.items():
+                    # augmented_vbm_dict[key] = np.rot90(value, axes=(0, 2))
+                    noise = np.random.normal(0, 0.01, value.shape)
+                    augmented_vbm_dict[key] = value + noise
+                    assert value.shape == augmented_vbm_dict[key].shape, f"Shape mismatch: {value.shape}!= {augmented_vbm_dict[key].shape}"
+                np.savez(augmented_vbm_path, **augmented_vbm_dict)
+            # new path dict
+            new_subj_id = path_dict["auxi_info"]["ID"] + "_augmented"
+            new_auxi_info = path_dict["auxi_info"].copy()
+            new_auxi_info["ID"] = new_subj_id
+            new_dict[new_subj_id] = {"auxi_info" : new_auxi_info,
+                                     "fc"        : augmented_fc_path,
+                                     "vbm"       : augmented_vbm_path}
+        assert len(new_dict) == len(old_list), f"Length mismatch: {len(new_dict)}!= {len(train_list)}"
+        return new_dict
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
         kfold_dir_paths = {} 
         # REST-meta-MDD: "SiteID-target-SubjectID"
         subj_list = list(self.paths_dict.keys())
+        count_1 = sum("-1-" in item for item in subj_list)  
+        count_2 = sum("-2-" in item for item in subj_list)  
+        assert count_1 + count_2 == len(subj_list), f"Count mismatch: {count_1} + {count_2} != {len(subj_list)}"
+        difference = count_1-count_2 # subjects with depression is more than healthy controls
+        if not difference == 0:
+            label = "-1-" if difference < 0 else "-2-"
+            selected_list = random.sample([x for x in subj_list if label in x], abs(difference))
+            selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
+            self.paths_dict = {**self.paths_dict, **selected_dict}
+            subj_list = list(self.paths_dict.keys())
         random.shuffle(subj_list)
         fold = 1
         for train_index, test_index in self.kf.split(subj_list):
             kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
                                      "test"  : [self.paths_dict[subj_list[i]] for i in test_index]}
-            # kfold_dir_paths[fold]["train"] = self.__data_augmentation__(kfold_dir_paths[fold]["train"])
             fold += 1
         return kfold_dir_paths
 
     def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> tuple[DataLoader, DataLoader]:
-        kfold_dir_paths = self.__k_fold__()
-        train_dataset = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
-        test_dataset  = Dataset_Major_Depression(path_list=kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False)
-        test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False)
+        train_dataset = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
+        test_dataset  = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
+        # set persistent_workers=True to avoid OOM
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
+        test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
         return return_dataloaders
 
 # global is better than not    
-get_major_dataloader_via_fold = KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold
+# get_major_dataloader_via_fold = KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold
+kfold_major_depression = KFold_Major_Depression(is_global_signal_regression=True)
