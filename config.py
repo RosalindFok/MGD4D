@@ -21,12 +21,22 @@ class IS_MD:
 class Train_Config:
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 24
+    batch_size: int = 22 # 60 22 # 代码在dataset.py中，不在main中
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(1)
-    lr: float = 2e-5
-    latent_embedding_dim: int = 512
+    epochs: range = range(30)
+    lr: float = 1e-5 # 1 1e-5; 2 3e-5; 3 2e-6
+    latent_embedding_dim: int = 768 
     use_lgd: bool = True # True False
+
+# @dataclass(frozen=True)
+# class Train_Encoder:
+#     n_splits: range = range(1,6) # 5 folds
+#     shuffle: bool = False
+#     batch_size: int = 128
+#     num_workers: int = 6 if platform.system() == 'Linux' else 0
+#     epochs: range = range(30)
+#     lr: float = 1e-5
+#     latent_embedding_dim: int = 768
     
 # Brain network
 @dataclass(frozen=True)

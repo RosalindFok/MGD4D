@@ -215,7 +215,7 @@ class Dataset_Major_Depression(Dataset):
                 # value = self.anxi_values[attribute]["mean"] if value == 0 else value
                 value /= self.anxi_values[attribute]["max"]
             processed_auxi_info[attribute] = to_tensor([value])
-        processed_auxi_info = self.__subgraph__(input_dict=processed_auxi_info)
+        processed_auxi_info["site"] = to_tensor([float(ID.split("-")[0][1:]) / 25]) # site: S1-S25, which stands for subjects' location.
 
         # Functional connectivity
         fc_matrices = {}
@@ -225,6 +225,8 @@ class Dataset_Major_Depression(Dataset):
             # AAL shape: (116, 116)
             # HOC shape: (96, 96)
             # HOS shape: (16, 16)
+            # assert not (np.max(matrix) - np.min(matrix)) == 0, f"max: {np.max(matrix)}, min: {np.min(matrix)}"
+            # matrix = (matrix - np.min(matrix)) / (np.max(matrix) - np.min(matrix))
             fc_matrices[atlas_name] = to_tensor(matrix)
 
         # VBM
@@ -321,29 +323,62 @@ class KFold_Major_Depression:
             new_dict[new_subj_id] = {"auxi_info" : new_auxi_info,
                                      "fc"        : augmented_fc_path,
                                      "vbm"       : augmented_vbm_path}
-        assert len(new_dict) == len(old_list), f"Length mismatch: {len(new_dict)}!= {len(train_list)}"
+        assert len(new_dict) == len(old_list), f"Length mismatch: {len(new_dict)}!= {len(old_list)}"
         return new_dict
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
-        kfold_dir_paths = {} 
+        kfold_dir_paths = {}
         # REST-meta-MDD: "SiteID-target-SubjectID"
         subj_list = list(self.paths_dict.keys())
-        count_1 = sum("-1-" in item for item in subj_list)  
-        count_2 = sum("-2-" in item for item in subj_list)  
-        assert count_1 + count_2 == len(subj_list), f"Count mismatch: {count_1} + {count_2} != {len(subj_list)}"
-        difference = count_1-count_2 # subjects with depression is more than healthy controls
-        if not difference == 0:
-            label = "-1-" if difference < 0 else "-2-"
-            selected_list = random.sample([x for x in subj_list if label in x], abs(difference))
-            selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
-            self.paths_dict = {**self.paths_dict, **selected_dict}
-            subj_list = list(self.paths_dict.keys())
-        random.shuffle(subj_list)
-        fold = 1
-        for train_index, test_index in self.kf.split(subj_list):
-            kfold_dir_paths[fold] = {"train" : [self.paths_dict[subj_list[i]] for i in train_index], 
-                                     "test"  : [self.paths_dict[subj_list[i]] for i in test_index]}
-            fold += 1
+
+        # each sites
+        site_dict = defaultdict(lambda: defaultdict(list))
+        for subj in subj_list:
+            split = subj.split("-")
+            site_dict[split[0]][split[1]].append(subj)
+        
+        # data augmentation: balance positive and negative samples
+        for site, pn_samples in site_dict.items(): # pn: positive/negative
+            shortest_key = min(pn_samples, key=lambda k: len(pn_samples[k])) 
+            longest_key  = max(pn_samples, key=lambda k: len(pn_samples[k])) 
+            if not len(pn_samples[shortest_key]) == len(pn_samples[longest_key]): # imbalance
+                difference = len(pn_samples[longest_key]) - len(pn_samples[shortest_key])
+                if difference <= len(pn_samples[shortest_key]):
+                    # randomly select samples from shortest list
+                    selected_list = random.sample([x for x in pn_samples[shortest_key]], difference)
+                    selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
+                    # update the new samples
+                    site_dict[site][shortest_key].extend(selected_list)
+                    self.paths_dict.update(selected_dict)
+                else: # severe imbalance
+                    multiple = len(pn_samples[longest_key]) // len(pn_samples[shortest_key])
+                    remainder = len(pn_samples[longest_key]) % len(pn_samples[shortest_key])
+                    old_list = [self.paths_dict[x] for x in pn_samples[shortest_key]]
+                    for _ in range(multiple):
+                        selected_dict = self.__data_augmentation__(old_list=old_list)
+                        site_dict[site][shortest_key].extend(list(selected_dict.keys()))
+                        self.paths_dict.update(selected_dict)
+                        old_list = [self.paths_dict[x] for x in selected_dict.keys()]
+                    selected_list = random.sample([x for x in pn_samples[shortest_key]], remainder)
+                    selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
+                    site_dict[site][shortest_key].extend(selected_list)
+                    self.paths_dict.update(selected_dict)
+
+
+        train_dict, test_dict = defaultdict(list), defaultdict(list)
+        for site, pn_samples in site_dict.items(): # pn: positive/negative
+            for key, value in pn_samples.items():
+                fold = 1
+                for train_index, test_index in self.kf.split(value):
+                    train_dict[fold].extend(value[i] for i in train_index)
+                    test_dict[fold].extend(value[i] for i in test_index)
+                    fold += 1
+        for fold in train_dict.keys():
+            random.shuffle(train_dict[fold])
+            random.shuffle(test_dict[fold])
+            kfold_dir_paths[fold] = {"train" : [self.paths_dict[x] for x in train_dict[fold]], 
+                                     "test"  : [self.paths_dict[x] for x in test_dict[fold]]}
+        
         return kfold_dir_paths
 
     def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> tuple[DataLoader, DataLoader]:
@@ -355,6 +390,5 @@ class KFold_Major_Depression:
         return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
         return return_dataloaders
 
-# global is better than not    
-# get_major_dataloader_via_fold = KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold
-kfold_major_depression = KFold_Major_Depression(is_global_signal_regression=True)
+# global_signal is better than not    
+get_major_dataloader_via_fold = KFold_Major_Depression(is_global_signal_regression=True).get_dataloader_via_fold

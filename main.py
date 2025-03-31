@@ -2,17 +2,17 @@ import gc
 import csv
 import json
 import torch
+import argparse
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
 from typing import Any
-from dataclasses import dataclass
 from collections import defaultdict
 
 from metrics import Metrics
 from config import Train_Config, seed
 from plot import plot_confusion_matrix
-from dataset import kfold_major_depression
+from dataset import get_major_dataloader_via_fold
 from models import device, MGD4MD, get_GPU_memory_usage
 
 np.random.seed(seed)
@@ -46,32 +46,28 @@ def move_to_device(data: Any, device: torch.device) -> Any:
     else:
         return data
 
-@dataclass
-class Train_Returns:
-    train_loss: float
-    total_memory: float
-    reserved_memory: float
-
 def train(device : torch.device,
+          epoch : int,
           model : nn.Module, 
           loss_fn : nn.modules.loss._Loss, 
           optimizer : torch.optim.Optimizer, 
-          dataloader : torch.utils.data.DataLoader) -> Train_Returns:
+          dataloader : torch.utils.data.DataLoader) -> float:
     model.train()
     train_loss_list = []
     mem_reserved_list = []
+    probability_list = []
+    target_list = []
     for batches in tqdm(dataloader, desc="Training", leave=True):
         # move to GPU
         auxi_info = move_to_device(batches.info, device)
         fc_matrices = move_to_device(batches.fc, device)
         vbm_matrices = move_to_device(batches.vbm, device)
-        target = move_to_device(batches.target, device)
+        target = move_to_device(batches.target, device).flatten()
         # forward
         output =  model(structural_input_dict=vbm_matrices,
                         functional_input_dict=fc_matrices,
-                        information_input_dict=auxi_info)
-        target = nn.functional.one_hot(target.long(), num_classes=2).float()
-        # target = target.float()
+                        information_input_dict=auxi_info).flatten()
+        assert output.shape == target.shape, f"Output shape {output.shape} does not match target shape {target.shape}"
         # loss
         loss = loss_fn(output, target)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
@@ -83,12 +79,28 @@ def train(device : torch.device,
         # monitor GPU memory usage
         total_memory, mem_reserved = get_GPU_memory_usage()
         mem_reserved_list.append(mem_reserved)
-    return Train_Returns(train_loss=sum(train_loss_list)/len(train_loss_list), 
-                         total_memory=total_memory, reserved_memory=max(mem_reserved_list))
+        probability_list.extend(nn.Sigmoid()(output).detach().cpu().numpy())
+        target_list.extend(target.detach().cpu().numpy())
+    print(f"Train loss: {sum(train_loss_list)/len(train_loss_list)}, GPU memory usage: {max(mem_reserved_list):.2f}GB / {total_memory:.2f}GB")
+    # find the optimal threshold
+    probability = np.array(probability_list)
+    target = np.array(target_list).astype(int)
+    thresholds = np.linspace(0, 1, 1000) # generate 1000 thresholds between 0 and 1
+    best_threshold = 0.0  
+    best_acc = 0.0  
+    for threshold in thresholds:  
+        prediction = (probability >= threshold).astype(int)  
+        acc = Metrics.ACC(pred=prediction, true=target)
+        if acc > best_acc:  
+            best_acc = acc  
+            best_threshold = threshold 
+    print(f"Best Threshold: {best_threshold}, Best AUC: {best_acc}") 
+    return best_threshold
 
 def test(device : torch.device,
          model : nn.Module, 
          dataloader : torch.utils.data.DataLoader,
+         threshold : float,
          is_valid : bool = False,
          log_epoch : int = -1) -> dict[str, float]:
     model.eval()
@@ -106,19 +118,17 @@ def test(device : torch.device,
             # forward
             output =  model(structural_input_dict=vbm_matrices,
                             functional_input_dict=fc_matrices,
-                            information_input_dict=auxi_info)
-            probability = output[:, -1]
-            prediction = output.argmax(dim=1)
-            # probability = output.flatten()
-            # prediction = (probability >= 0.5).long()
+                            information_input_dict=auxi_info).flatten()
+            probability = nn.Sigmoid()(output)
+            prediction = (probability > threshold).int()
             target_list.extend(batches.target.numpy())
             prediction_list.extend(prediction.cpu().numpy())
             probability_list.extend(probability.cpu().numpy())
             subjid_list.extend(batches.id)
     
-    target = np.array(target_list).astype(int)
-    probability = np.array(probability_list).astype(float)
-    prediction = np.array(prediction_list).astype(int)
+    target = np.array(target_list).astype(int).flatten() 
+    probability = np.array(probability_list).astype(float).flatten() 
+    prediction = np.array(prediction_list).astype(int).flatten() 
     assert target.shape == probability.shape == prediction.shape, f"{target.shape} != {probability.shape} != {prediction.shape}"
     metrices = {
         "AUC" : Metrics.AUC(prob=probability, true=target),
@@ -136,66 +146,74 @@ def test(device : torch.device,
             writer.writerow(["Subject", "True Label", "Probability", "Predicted Label"])
             for id, true, prob, pred in zip(subjid_list, target, probability, prediction):
                 writer.writerow([id, true, f"{prob:.6f}", pred])
+    
     return metrices
 
 def main() -> None:
-    test_results = defaultdict(list)
-    for fold in Train_Config.n_splits:
-        return_dataloaders = kfold_major_depression.get_dataloader_via_fold(fold)
-        train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--fold', type=str)
+    args = parser.parse_args()
+    fold = int(args.fold)
+    
+    return_dataloaders = get_major_dataloader_via_fold(fold)
+    train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
 
-        # Shape
-        auxi_info = next(iter(test_dataloader)).info
-        fc_matrices = next(iter(test_dataloader)).fc
-        vbm_matrices = next(iter(test_dataloader)).vbm
+    # Shape
+    auxi_info = next(iter(test_dataloader)).info
+    fc_matrices = next(iter(test_dataloader)).fc
+    vbm_matrices = next(iter(test_dataloader)).vbm
+    shapes_dict = {"s" : {k:v.shape[1:] for k,v in vbm_matrices.items()},                   # structural
+                   "f" : {k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()}}  # functional
 
-        # Model
-        model = MGD4MD(auxi_info_number=len(auxi_info),
-                       functional_embeddings_shape={k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()},
-                       structural_matrices_shape={k:v.shape[1:] for k,v in vbm_matrices.items()},
-                       embedding_dim=Train_Config.latent_embedding_dim,
-                       use_lgd=Train_Config.use_lgd).to(device)
-        trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
-        with open("model_structure.txt", "w") as f:  
-            f.write(str(model))
+    # Model
+    model = MGD4MD(auxi_info_number=len(auxi_info),
+                   shapes_dict=shapes_dict,
+                   embedding_dim=Train_Config.latent_embedding_dim,
+                   use_lgd=Train_Config.use_lgd).to(device)
+    trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
 
-        # Loss
-        loss_fn = nn.CrossEntropyLoss()
+    # Loss
+    loss_fn = nn.BCEWithLogitsLoss()
 
-        # Optimizer
-        optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
+    # Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
 
-        for epoch in Train_Config.epochs:
-            lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
-            lr = max(lr, Train_Config.lr*0.1)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
+    threshold_list = []
+    for epoch in Train_Config.epochs:
+        lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
+        # lr = max(lr, Train_Config.lr*0.1)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
 
-            print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
-            # Train
-            train_returns = train(device=device, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader)
-            print(f"Train loss: {train_returns.train_loss}, GPU memory usage: {train_returns.reserved_memory:.2f}GB / {train_returns.total_memory:.2f}GB")
-            # Valid
-            metrics = test(device=device, model=model, dataloader=test_dataloader, 
-                           is_valid=True, log_epoch=epoch+1)
-            print(metrics)
+        print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
+        # Train
+        threshold = train(device=device, epoch=epoch, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader)
+        # Valid
+        metrics = test(device=device, model=model, dataloader=test_dataloader, threshold=threshold,
+                       is_valid=True, log_epoch=epoch+1)
+        print(metrics)
+        threshold_list.append(threshold)
             
-        # Test
-        print("Test")
-        metrics = test(device=device, model=model, dataloader=test_dataloader)
-        with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=4, ensure_ascii=False)
-        for key, value in metrics.items():
-            test_results[key].append(value)
+    # Test
+    print("Test")
+    metrics = test(device=device, model=model, dataloader=test_dataloader, threshold=threshold_list[-1])
+    with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=4, ensure_ascii=False)
 
-    # Write all results
-    results = defaultdict(dict)
-    for key, values in test_results.items():
-        assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
-        results[key] ={"fold" : values, "mean" : np.mean(values)}
-    with open("all_test_results.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)  
+    del model, optimizer, loss_fn
+    del auxi_info, fc_matrices, vbm_matrices
+    del train_dataloader, test_dataloader
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # # Write all results
+    # results = defaultdict(dict)
+    # for key, values in test_results.items():
+    #     assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
+    #     results[key] ={"fold" : values, "mean" : np.mean(values)}
+    # with open("all_test_results.json", "w", encoding="utf-8") as f:
+    #     json.dump(results, f, indent=4, ensure_ascii=False)  
 
 if __name__ == "__main__":
     main()

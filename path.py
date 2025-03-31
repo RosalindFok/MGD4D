@@ -1,6 +1,11 @@
 from pathlib import Path
 from dataclasses import dataclass, field
 
+# Slurm: for Beijing Super Cloud Computing Center
+@dataclass(frozen=True)
+class Slurm:
+    slurm_id_path: Path = Path("slurm_ids.json")
+
 dataset_dir_path = Path("..") / "dataset"
 
 @dataclass(frozen=True)

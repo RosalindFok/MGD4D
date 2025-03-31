@@ -87,10 +87,11 @@ class Encoder_Functional(nn.Module):
         """
         project to the same dimension of structural embedding
         """
+        activation = nn.Tanh() # Tanh Softsign
         if input_dim > output_dim:
             return nn.Sequential(
                 nn.Linear(input_dim, 2048),
-                nn.Tanh(),
+                activation,
                 nn.Linear(2048, output_dim) 
             )
         elif input_dim == output_dim:
@@ -115,7 +116,8 @@ class Encoder_Information(nn.Module):
         return {'+'.join(list(input_dict.keys())) : torch.cat(list(input_dict.values()), dim=1)}
 
 class LatentGraphDiffusion(nn.Module):
-    def __init__(self, embedding_dim : int, features_number : int, num_timesteps : int = 1000) -> None:
+    def __init__(self, embedding_dim : int, idx_modal_key : dict[str, dict[str, Any]], 
+                       features_number : int, num_timesteps : int = 100) -> None:
         super().__init__()
         self.num_timesteps = num_timesteps
         self.features_number = features_number
@@ -127,6 +129,7 @@ class LatentGraphDiffusion(nn.Module):
         self.register_buffer('sqrt_alphas_cumprod', to_torch(np.sqrt(alphas_cumprod)))
         # Cumulative Noise Growth Factor
         self.register_buffer('sqrt_one_minus_alphas_cumprod', to_torch(np.sqrt(1. - alphas_cumprod)))
+        self.idx_modal_key = idx_modal_key
 
         # Q K V
         self.QKV = nn.ModuleDict({
@@ -141,12 +144,12 @@ class LatentGraphDiffusion(nn.Module):
         
         # score
         self.half_dim = embedding_dim // 2
-        self.contribution_mlps = nn.ModuleList(
-            [nn.Sequential(
-                nn.Linear(in_features=features_number, out_features=1),
-                nn.Sigmoid()
-            ) for _ in range(features_number)]
-        )
+        self.contribution_mlps = nn.ModuleDict({  
+            f"{modal}-{key}" : nn.Sequential(
+                nn.Linear(in_features=features_number, out_features=1),  
+                nn.Sigmoid()  
+            ) for _, (modal, key) in idx_modal_key.items()  
+        })
 
         # time
         self.time_mlp = nn.Sequential(  
@@ -275,11 +278,9 @@ class LatentGraphDiffusion(nn.Module):
         """
         reverse chain: converts noise back to data, which is called `p_sample` in `DDPM`
         """
-        stacked_keys_list, stacked_embeddings_list = [], []
-        for group in ["functional", "structural"]:
-            for key, embedding in noisy_embeddings_dict[group].items():
-                stacked_keys_list.append((group, key))
-                stacked_embeddings_list.append(embedding)
+        stacked_embeddings_list = [0] * len(self.idx_modal_key)
+        for idx, (modal, key) in self.idx_modal_key.items():
+            stacked_embeddings_list[idx] = noisy_embeddings_dict[modal][key]
 
         stacked_features = torch.stack(stacked_embeddings_list, dim=0)
         stacked_features = stacked_features.permute(1, 0, 2) # shape is [batchsize, features number, embedding_dim]
@@ -302,24 +303,24 @@ class LatentGraphDiffusion(nn.Module):
         attended_features, attention_weights = self.multihead_attention(query=Q, key=K, value=V) 
         
         # U-Net
+        # attended_features = self.unet(stacked_features) # ablation of Transformer+multihead_attention
         attended_features = self.unet(attended_features)
 
-        attended_embeddings_dict = {}
-        for i, combined_key in enumerate(stacked_keys_list): # combined_key = (group, key)
-            attended_embeddings_dict[combined_key] = attended_features[:, i, :]
-        assert len(attended_embeddings_dict) == self.features_number, f"number of attended embeddings = {len(attended_embeddings_dict)} is not equal to features number = {self.features_number}"
+        # attended_embeddings_dict = {}
+        attended_embeddings_dict = defaultdict(dict)
+        for idx, (modal, key) in self.idx_modal_key.items():
+            attended_embeddings_dict[modal][key] = attended_features[:, idx, :]
         
         # Score
         scores_dict = defaultdict(dict)
-        for i, (group, key) in enumerate(attended_embeddings_dict.keys()):
-            # score = self.contribution_mlps[i](attended_embeddings_dict[(group, key)])
-            score = self.contribution_mlps[i](attention_weights[:, i])
-            scores_dict[group][key] = score
+        for idx, (modal, key) in self.idx_modal_key.items():
+            score = self.contribution_mlps[f"{modal}-{key}"](attention_weights[:, idx])
+            scores_dict[modal][key] = score
         
         # Weighted
         weighted_embeddings_dict = defaultdict(dict)
-        for (group, key), embedding in attended_embeddings_dict.items():
-            weighted_embeddings_dict[group][key] = embedding * scores_dict[group][key]
+        for _, (modal, key) in self.idx_modal_key.items():
+            weighted_embeddings_dict[modal][key] = attended_embeddings_dict[modal][key] * scores_dict[modal][key]
         
         return weighted_embeddings_dict # TODO scores_dict and attention_weights
 
@@ -333,7 +334,7 @@ class LatentGraphDiffusion(nn.Module):
         for modal, embeddings_dict in latent_embeddings_dict.items():
             for key, x_0 in embeddings_dict.items():
                 noise = torch.randn_like(x_0)
-                # forward chaimn
+                # forward chain
                 x_t = self.forward_chain(x_0=x_0, t=t, noise=noise)
                 noisy_embeddings_dict[modal][key] = x_t
                 noise_dict[modal][key] = noise
@@ -344,30 +345,50 @@ class LatentGraphDiffusion(nn.Module):
         return output_embeddings_dict
 
 class Decoder(nn.Module):
-    def __init__(self, auxi_info_number : int, features_number : int, embedding_dim : int, use_auxiliary_information : bool = True) -> None:
+    def __init__(self, auxi_info_number : int, features_number : int, embedding_dim : int, idx_modal_key : dict[int, tuple[str, str]]) -> None:
         super().__init__()
-        self.use = use_auxiliary_information
-        self.tanh = nn.Tanh()
-        auxi_info_number = auxi_info_number if self.use else 0
+        # 1
+        # activation = nn.Tanh() # Tanh Softsign
+        # 2
+        activation = nn.SiLU()
+        # 3
+        # activation = nn.ReLU()
 
+        # self.decode_1 = nn.Sequential(
+        #     nn.Flatten(),
+        #     nn.Linear(in_features=features_number*embedding_dim, out_features=16*embedding_dim),
+        #     activation,
+        #     nn.Linear(in_features=16*embedding_dim, out_features=8*embedding_dim),
+        #     activation,
+        #     nn.Linear(in_features=8*embedding_dim, out_features=embedding_dim),
+        #     activation,
+        # )
+        # 1
         self.decode_1 = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(in_features=features_number*embedding_dim, out_features=16*embedding_dim),
-            self.tanh,
-            nn.Linear(in_features=16*embedding_dim, out_features=8*embedding_dim),
-            self.tanh,
-            nn.Linear(in_features=8*embedding_dim, out_features=embedding_dim),
-            self.tanh,
+            nn.Linear(in_features=features_number*embedding_dim, out_features=4*embedding_dim),
+            activation,
+            nn.Linear(in_features=4*embedding_dim, out_features=2*embedding_dim),
+            activation,
+            nn.Linear(in_features=2*embedding_dim, out_features=embedding_dim),
+            activation
+        )
+        
+        # self.decode_2 = nn.Sequential(
+        #     nn.Linear(in_features=embedding_dim+auxi_info_number, out_features=64),
+        #     activation, 
+        #     nn.Linear(in_features=64, out_features=1)
+        # )
+        # 1
+        self.decode_2 = nn.Sequential(
+            nn.Linear(in_features=embedding_dim+auxi_info_number, out_features=256),
+            activation, 
+            nn.Linear(in_features=256, out_features=16),
+            activation,
+            nn.Linear(in_features=16, out_features=1)
         )
 
-        self.decode_2 = nn.Sequential(
-            nn.Linear(in_features=embedding_dim+auxi_info_number, out_features=64),
-            self.tanh, 
-            nn.Linear(in_features=64, out_features=2),
-            nn.Softmax(dim=-1)
-            # nn.Linear(in_features=64, out_features=1),
-            # nn.Sigmoid()
-        )
+        self.idx_modal_key = idx_modal_key
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]], 
                 information_embedding_dict : dict[str, torch.Tensor]) -> torch.Tensor:
@@ -376,38 +397,42 @@ class Decoder(nn.Module):
         assert len(information_embedding) == 1 #
         information_embedding = information_embedding[0]
 
-        for _, value in latent_embeddings_dict.items():
-            for _, tensor in value.items():
-                concatenated_embeddings_list.append(tensor)
+        for idx, (modal, key) in self.idx_modal_key.items():
+            concatenated_embeddings_list.append(latent_embeddings_dict[modal][key])
         embeddings = torch.stack(concatenated_embeddings_list, dim=1) # shape=[batchsize, features_number, embedding_dim]
         embeddings = self.decode_1(embeddings)
-        if self.use:
-            embeddings = torch.cat((embeddings, information_embedding), dim=1)
+        embeddings = torch.cat((embeddings, information_embedding), dim=1)
         output = self.decode_2(embeddings)
 
         return output
     
 class MGD4MD(nn.Module):
-    def __init__(self, auxi_info_number : int, structural_matrices_shape : dict[str, torch.Size],
-                 functional_embeddings_shape : dict[str, int], embedding_dim : int = 512,
-                 use_lgd : bool = True) -> None:
+    def __init__(self, auxi_info_number : int, shapes_dict : dict[str, dict[str, Any]], 
+                 embedding_dim : int = 512, use_lgd : bool = True) -> None:
         super().__init__()
         self.use_lgd = use_lgd
+        # index of modal-key
+        self.idx_modal_key = {}
+        idx = 0
+        for modal, keys in shapes_dict.items():
+            for key in keys:
+                self.idx_modal_key[idx] = (modal, key)
+                idx += 1
 
         # Encoders
-        self.encoder_s = Encoder_Structure(matrices_shape=structural_matrices_shape, embedding_dim=embedding_dim)
-        self.encoder_f = Encoder_Functional(functional_embeddings_shape=functional_embeddings_shape, target_dim=embedding_dim)
+        self.encoder_s = Encoder_Structure(matrices_shape=shapes_dict["s"], embedding_dim=embedding_dim)
+        self.encoder_f = Encoder_Functional(functional_embeddings_shape=shapes_dict["f"], target_dim=embedding_dim)
         self.encoder_i = Encoder_Information()
 
         # LatentGraphDiffusion
         if self.use_lgd:
-            self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, 
-                                            features_number=len(structural_matrices_shape)+len(functional_embeddings_shape))
+            self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, idx_modal_key=self.idx_modal_key,
+                                            features_number=len(shapes_dict["s"])+len(shapes_dict["f"]))
 
         # Decoder
         self.decoder = Decoder(auxi_info_number=auxi_info_number, 
-                               features_number=len(structural_matrices_shape)+len(functional_embeddings_shape),
-                               embedding_dim=embedding_dim)
+                               features_number=len(shapes_dict["s"])+len(shapes_dict["f"]),
+                               embedding_dim=embedding_dim, idx_modal_key=self.idx_modal_key)
 
     def __clone_tensor_dict__(self, d : Any) -> Any:  
         if isinstance(d, torch.Tensor):  
@@ -427,8 +452,11 @@ class MGD4MD(nn.Module):
         functional_embeddings_dict = self.encoder_f(functional_input_dict)
         information_embedding_dict = self.encoder_i(information_input_dict) 
         
-        latent_embeddings_dict = {"structural"  : structural_embeddings_dict, 
-                                  "functional"   : functional_embeddings_dict}
+        # structural_embeddings_dict = {k:torch.zeros_like(v, dtype=v.dtype, device=v.device) for k, v in structural_embeddings_dict.items()}
+        # functional_embeddings_dict = {k:torch.zeros_like(v, dtype=v.dtype, device=v.device) for k, v in functional_embeddings_dict.items()}
+
+        latent_embeddings_dict = {"s"  : structural_embeddings_dict, "f"  : functional_embeddings_dict}
+
         # latent graph diffusion
         if self.use_lgd:
             original_embeddings_dict = self.__clone_tensor_dict__(latent_embeddings_dict)  
@@ -440,5 +468,5 @@ class MGD4MD(nn.Module):
         
         # decode
         output = self.decoder(latent_embeddings_dict, information_embedding_dict)
-
+       
         return output

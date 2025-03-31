@@ -36,12 +36,11 @@ pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 
 
 # script
-chmod 777 *.sh
-sbatch --gpus=1 -p gpu run_MGD4MD.sh # submit the job, MGD4MD
+python run.py
 sbatch --gpus=1 -p gpu run_baselines.sh # submit the job, baselines
 parajobs # check id of the job
 scancel job_id # cancel the job via its id
-sh clear.sh # clear the log file
+python clear.py # clear the log file
 
 conda deactivate
 conda env remove -n MGD4MD

@@ -3,16 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F  
 
 class DoubleConv(nn.Module):  
-    """(Conv2D => BatchNorm => Tanh) × 2"""  
+    """(Conv2D => BatchNorm => activation) × 2"""  
     def __init__(self, in_channels, out_channels):  
         super().__init__()  
+        activation = nn.Tanh() # Tanh Softsign
         self.double_conv = nn.Sequential(  
             nn.Conv2d(in_channels, out_channels, kernel_size=(1, 3), padding=(0, 1)),  
             nn.BatchNorm2d(out_channels),  
-            nn.Tanh(),  
+            activation,  
             nn.Conv2d(out_channels, out_channels, kernel_size=(1, 3), padding=(0, 1)),  
             nn.BatchNorm2d(out_channels),  
-            nn.Tanh()  
+            activation  
         )  
 
     def forward(self, x):  
@@ -20,15 +21,28 @@ class DoubleConv(nn.Module):
 
 class Down(nn.Module):  
     """downsampling: only downsample in the second dimension"""  
-    def __init__(self, in_channels, out_channels):  
+    def __init__(self, in_channels, out_channels, method : str = "maxpool"):  
         super().__init__()  
-        self.maxpool_conv = nn.Sequential(  
-            nn.MaxPool2d(kernel_size=(1, 2), stride=(1, 2)),  
-            DoubleConv(in_channels, out_channels)  
-        )  
+        if method == "maxpool":
+            self.down_conv = nn.Sequential(  
+                nn.MaxPool2d(kernel_size=(1, 2), stride=(1, 2)),  
+                DoubleConv(in_channels, out_channels)  
+            )  
+        elif method == "conv":
+            self.down_conv = nn.Sequential(  
+                nn.Conv2d(in_channels, in_channels, kernel_size=(1,3), stride=(1,2), padding=(0,1)),  
+                DoubleConv(in_channels, out_channels)  
+            )
+        elif method == "avgpool":
+            self.down_conv = nn.Sequential(  
+                nn.AvgPool2d(kernel_size=(1, 2), stride=(1, 2)),  
+                DoubleConv(in_channels, out_channels)  
+            )
+        else:
+            raise ValueError("Method must be 'maxpool' or 'conv' or 'avgpool'")
 
     def forward(self, x):  
-        return self.maxpool_conv(x)  
+        return self.down_conv(x)
 
 class Up(nn.Module):  
     """upsampling: only upsample in the second dimension"""  
@@ -58,13 +72,14 @@ class Bottleneck(nn.Module):
     """bottleneck layer"""  
     def __init__(self, in_channels, out_channels):  
         super().__init__()  
+        activation = nn.Tanh() # Tanh Softsign
         self.bottleneck = nn.Sequential(  
             nn.Conv2d(in_channels, out_channels * 2, kernel_size=(1, 3), padding=(0, 1)),  
             nn.BatchNorm2d(out_channels * 2),  
-            nn.Tanh(),  
+            activation,  
             nn.Conv2d(out_channels * 2, out_channels, kernel_size=(1, 3), padding=(0, 1)),  
             nn.BatchNorm2d(out_channels),  
-            nn.Tanh()  
+            activation 
         )  
     
     def forward(self, x):  
