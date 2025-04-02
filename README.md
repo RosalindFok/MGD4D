@@ -36,7 +36,8 @@ pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 
 
 # script
-python run.py
+python run.py  # run MGD4MD, sumit all folds in one stroke
+python view.py # view average results of all folds
 sbatch --gpus=1 -p gpu run_baselines.sh # submit the job, baselines
 parajobs # check id of the job
 scancel job_id # cancel the job via its id

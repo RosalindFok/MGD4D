@@ -148,15 +148,15 @@ def test(device : torch.device,
             assert not torch.isnan(loss), f"Loss is NaN: {loss}"
             loss_list.append(loss.cpu().item())
     
-    metrices = {
+    metrics = {
         "MAX" : max(loss_list),
         "MIN" : min(loss_list),
         "MEAN" : sum(loss_list)/len(loss_list),
         "STD" : np.std(loss_list)
     }
-    metrices = {k : float(v) for k, v in metrices.items()}
+    metrics = {k : float(v) for k, v in metrics.items()}
 
-    return metrices
+    return metrics
 
 def main() -> None:
     test_results = defaultdict(list)

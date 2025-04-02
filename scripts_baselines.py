@@ -75,17 +75,17 @@ if __name__ == '__main__':
                 pred = np.array(pred_list).astype(int)
                 tag  = np.array(tag_list).astype(int)
 
-                metrices = {
+                metrics = {
                     "AUC" : Metrics.AUC(prob=prob, true=tag),
                     "ACC" : Metrics.ACC(pred=pred, true=tag),
                     "PRE" : Metrics.PRE(pred=pred, true=tag),
                     "SEN" : Metrics.SEN(pred=pred, true=tag),
                     "F1S" : Metrics.F1S(pred=pred, true=tag)
                 }
-                metrices = {k : float(v) for k, v in metrices.items()}
-                for key, value in metrices.items():
+                metrics = {k : float(v) for k, v in metrics.items()}
+                for key, value in metrics.items():
                     print(f"{key}: {value}")
-            for key, value in metrices.items():
+            for key, value in metrics.items():
                 test_results[key].append(value)
 
         # Write all results

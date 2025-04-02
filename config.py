@@ -6,8 +6,8 @@ seed = 0
 # Gender
 @dataclass(frozen=True)
 class Gender:
-    FEMALE : int = 1
-    MALE   : int = 2
+    MALE   : int = 1
+    FEMALE : int = 2
     UNSPECIFIED  : int = 0
 
 # Is mild/major depression
@@ -21,10 +21,10 @@ class IS_MD:
 class Train_Config:
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 22 # 60 22 # 代码在dataset.py中，不在main中
+    batch_size: int = 24 # 22 
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(30)
-    lr: float = 1e-5 # 1 1e-5; 2 3e-5; 3 2e-6
+    epochs: range = range(10)
+    lr: float = 1e-5 
     latent_embedding_dim: int = 768 
     use_lgd: bool = True # True False
 

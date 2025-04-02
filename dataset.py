@@ -9,6 +9,7 @@ from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
 from scipy.io import loadmat  
 from functools import partial
+from itertools import zip_longest
 from dataclasses import dataclass
 from sklearn.model_selection import KFold
 from collections import namedtuple, defaultdict 
@@ -169,12 +170,11 @@ MDD_Returns = namedtuple("MDD_Returns", ["id", "info", "fc", "vbm", "target"])
 
 class Dataset_Major_Depression(Dataset):
     def __init__(self, path_list : list[dict[str, Any]], 
-                       auxi_values : dict[str, dict[str, float]],
                        brain_network_name : str) -> None:
         super().__init__()
         self.path_list = path_list
-        self.anxi_values = auxi_values
         self.brain_network_name = brain_network_name
+        self.to_tensor = partial(torch.tensor, dtype=torch.float32)
     
     def __subgraph__(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
@@ -201,46 +201,32 @@ class Dataset_Major_Depression(Dataset):
         auxi_info = path_dict["auxi_info"]
         ID = auxi_info["ID"]
         target = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
-        assert target is not None, f"Unknown target in ID: {ID}"
-        to_tensor = partial(torch.tensor, dtype=torch.float32)
-        processed_auxi_info = {}
-        for attribute in ["Sex", "Age", "Education (years)"]:
-            assert attribute in auxi_info.keys(), f"Attribute {attribute} not found in auxiliary information"
-            if attribute == "Sex":
-                value = Gender.FEMALE if auxi_info["Sex"] == 2 else Gender.MALE if auxi_info["Sex"] == 1 else Gender.UNSPECIFIED
-                value /= max(Gender.FEMALE, Gender.MALE, Gender.UNSPECIFIED)
-            else:
-                value = auxi_info[attribute]
-                assert attribute in self.anxi_values.keys(), f"Attribute {attribute} not found in self.anxi_values"
-                # value = self.anxi_values[attribute]["mean"] if value == 0 else value
-                value /= self.anxi_values[attribute]["max"]
-            processed_auxi_info[attribute] = to_tensor([value])
-        processed_auxi_info["site"] = to_tensor([float(ID.split("-")[0][1:]) / 25]) # site: S1-S25, which stands for subjects' location.
+        assert target == int(auxi_info["depression"])
+        auxi_info = {k : self.to_tensor(v) for k, v in auxi_info.items() if k not in ["ID", "depression"]}
 
         # Functional connectivity
         fc_matrices = {}
         for atlas_name, matrix in np.load(path_dict["fc"], allow_pickle=True).items():
-            assert np.allclose(matrix, matrix.T), f"{atlas_name} matrix {matrix} is not symmetric"
-            # functional connectivity has been restricted to [-1, 1]
             # AAL shape: (116, 116)
             # HOC shape: (96, 96)
             # HOS shape: (16, 16)
-            # assert not (np.max(matrix) - np.min(matrix)) == 0, f"max: {np.max(matrix)}, min: {np.min(matrix)}"
-            # matrix = (matrix - np.min(matrix)) / (np.max(matrix) - np.min(matrix))
-            fc_matrices[atlas_name] = to_tensor(matrix)
+            matrix = (matrix - np.min(matrix)) / (np.max(matrix) - np.min(matrix))
+            fc_matrices[atlas_name] = self.to_tensor(matrix)
+            del matrix
 
         # VBM
         vbm_matrices = {}
         for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
             # matrix shape: (121, 145, 121)
             matrix = np.clip(matrix, 0, 1)
-            vbm_matrices[group_name] = to_tensor(matrix)
+            vbm_matrices[group_name] = self.to_tensor(matrix)
+            del matrix
 
         # target
-        target = to_tensor(target)
+        target = self.to_tensor(target)
 
         return MDD_Returns(
-            id=ID, info=processed_auxi_info, fc=fc_matrices, 
+            id=ID, info=auxi_info, fc=fc_matrices, 
             vbm=vbm_matrices, target=target
         )
 
@@ -257,16 +243,28 @@ class KFold_Major_Depression:
         assert auxi_info_path.exists(), f"Participants info file not found in {rest_meta_mdd_dir_path}"
         # Auxiliary Information: Sex, Age, Education (years)
         # sex: there 3 types in REST-meta-MDD dataset, most of them are female/male, one subject is unspecified
-        # age: 0 is unknown, min=12, max=82
-        # education years: 0 is unknown, min=3, max=23
         with auxi_info_path.open("r") as f:
-            auxi_info = json.load(f) # {sub_id: {key: value, ...}, ...}
-            age_array = np.array([info_dict["Age"] for _, info_dict in auxi_info.items()])
-            education_years_array = np.array([info_dict["Education (years)"] for _, info_dict in auxi_info.items()])
+            all_info = json.load(f) # {sub_id: {key: value, ...}, ...}
+            # age: 0 is unknown, min=12, max=82
+            age_array = np.array([info_dict["Age"] for _, info_dict in all_info.items()])
             age_array = age_array[age_array > 0]
+            # education years: 0 is unknown, min=3, max=23
+            education_years_array = np.array([info_dict["Education (years)"] for _, info_dict in all_info.items()])
             education_years_array = education_years_array[education_years_array > 0]
-            self.auxi_values = {"Age" : {"mean": age_array.mean(), "max": age_array.max(), "min": age_array.min()},
-                                "Education (years)" : {"mean": education_years_array.mean(), "max": education_years_array.max(), "min": education_years_array.min()}}
+        auxi_info = defaultdict(dict)
+        for sub_id, info_dict in all_info.items():
+            for attribute in ["Sex", "Age", "Education (years)", "ID", "depression"]:
+                assert attribute in info_dict.keys(), f"Attribute {attribute} not found in auxiliary information"
+                if attribute == "Sex":
+                    value = Gender.FEMALE if info_dict["Sex"] == 2 else Gender.MALE if info_dict["Sex"] == 1 else Gender.UNSPECIFIED
+                    value /= max(Gender.FEMALE, Gender.MALE, Gender.UNSPECIFIED)
+                elif attribute == "Age":
+                    value = info_dict[attribute] / age_array.max()
+                elif attribute == "Education (years)":
+                    value = info_dict[attribute] / education_years_array.max()
+                else:
+                    value = info_dict[attribute]
+                auxi_info[sub_id][attribute] = value
 
         # Functional connectivity
         fc_path_dict = {} 
@@ -305,13 +303,12 @@ class KFold_Major_Depression:
                     noise = (noise + noise.T) / 2
                     augmented_fc_dict[key] = value + noise
                 np.savez(augmented_fc_path, **augmented_fc_dict)
-            # VBM: add noise  (not rotate 90 degrees)
+            # VBM: add noise
             augmented_vbm_path = path_dict["vbm"].parent / f"{path_dict['vbm'].stem}_augmented.npz"
             if not augmented_vbm_path.exists():
                 vbm_matrix = np.load(path_dict["vbm"], allow_pickle=True)
                 augmented_vbm_dict = {}
                 for key,value in vbm_matrix.items():
-                    # augmented_vbm_dict[key] = np.rot90(value, axes=(0, 2))
                     noise = np.random.normal(0, 0.01, value.shape)
                     augmented_vbm_dict[key] = value + noise
                     assert value.shape == augmented_vbm_dict[key].shape, f"Shape mismatch: {value.shape}!= {augmented_vbm_dict[key].shape}"
@@ -327,7 +324,7 @@ class KFold_Major_Depression:
         return new_dict
 
     def __k_fold__(self) -> dict[int, dict[str, list[dict[str, Any]]]]:
-        kfold_dir_paths = {}
+        kfold_dir_paths = defaultdict(dict)
         # REST-meta-MDD: "SiteID-target-SubjectID"
         subj_list = list(self.paths_dict.keys())
 
@@ -342,29 +339,15 @@ class KFold_Major_Depression:
             shortest_key = min(pn_samples, key=lambda k: len(pn_samples[k])) 
             longest_key  = max(pn_samples, key=lambda k: len(pn_samples[k])) 
             if not len(pn_samples[shortest_key]) == len(pn_samples[longest_key]): # imbalance
-                difference = len(pn_samples[longest_key]) - len(pn_samples[shortest_key])
-                if difference <= len(pn_samples[shortest_key]):
-                    # randomly select samples from shortest list
-                    selected_list = random.sample([x for x in pn_samples[shortest_key]], difference)
-                    selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
-                    # update the new samples
-                    site_dict[site][shortest_key].extend(selected_list)
-                    self.paths_dict.update(selected_dict)
-                else: # severe imbalance
-                    multiple = len(pn_samples[longest_key]) // len(pn_samples[shortest_key])
-                    remainder = len(pn_samples[longest_key]) % len(pn_samples[shortest_key])
-                    old_list = [self.paths_dict[x] for x in pn_samples[shortest_key]]
-                    for _ in range(multiple):
-                        selected_dict = self.__data_augmentation__(old_list=old_list)
-                        site_dict[site][shortest_key].extend(list(selected_dict.keys()))
-                        self.paths_dict.update(selected_dict)
-                        old_list = [self.paths_dict[x] for x in selected_dict.keys()]
-                    selected_list = random.sample([x for x in pn_samples[shortest_key]], remainder)
-                    selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
-                    site_dict[site][shortest_key].extend(selected_list)
-                    self.paths_dict.update(selected_dict)
+                difference = min(len(pn_samples[longest_key]) - len(pn_samples[shortest_key]), len(pn_samples[shortest_key]))
+                # randomly select samples from shortest list
+                selected_list = random.sample([x for x in pn_samples[shortest_key]], difference)
+                selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
+                # update the new samples
+                site_dict[site][shortest_key].extend(selected_list)
+                self.paths_dict.update(selected_dict)
 
-
+        # k-fold
         train_dict, test_dict = defaultdict(list), defaultdict(list)
         for site, pn_samples in site_dict.items(): # pn: positive/negative
             for key, value in pn_samples.items():
@@ -373,17 +356,21 @@ class KFold_Major_Depression:
                     train_dict[fold].extend(value[i] for i in train_index)
                     test_dict[fold].extend(value[i] for i in test_index)
                     fold += 1
-        for fold in train_dict.keys():
-            random.shuffle(train_dict[fold])
-            random.shuffle(test_dict[fold])
-            kfold_dir_paths[fold] = {"train" : [self.paths_dict[x] for x in train_dict[fold]], 
-                                     "test"  : [self.paths_dict[x] for x in test_dict[fold]]}
         
+        # shuffle
+        for fold in Train_Config.n_splits:
+            for tag, sample_dict in zip(["train", "test"], [train_dict, test_dict]):
+                positive_samples = [x for x in sample_dict[fold] if "-1-" in x]
+                negative_samples = [x for x in sample_dict[fold] if "-2-" in x]
+                random.shuffle(positive_samples)
+                random.shuffle(negative_samples)
+                kfold_dir_paths[fold][tag] = [self.paths_dict[x] for x in [item for pair in zip_longest(positive_samples, negative_samples) for item in pair if item is not None] ]
+
         return kfold_dir_paths
 
     def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> tuple[DataLoader, DataLoader]:
-        train_dataset = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["train"], auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
-        test_dataset  = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["test"] , auxi_values=self.auxi_values, brain_network_name=Brain_Network.whole)
+        train_dataset = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["train"], brain_network_name=Brain_Network.whole)
+        test_dataset  = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["test"] , brain_network_name=Brain_Network.whole)
         # set persistent_workers=True to avoid OOM
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
         test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
