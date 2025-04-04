@@ -49,13 +49,12 @@ class ResNet3D(nn.Module):
         self.layer3 = self.make_layer(in_channels=out_channels*2, out_channels=out_channels*4, num_blocks=2, stride=2)  
         self.layer4 = self.make_layer(in_channels=out_channels*4, out_channels=out_channels*8, num_blocks=2, stride=2)  
         
-        # Global average pooling and embedding layer  
-        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))  
-
-        if not out_channels*8 == embedding_dim:
-            self.fc = nn.Linear(out_channels*8, embedding_dim)  
-        else:
-            self.fc = nn.Identity()
+        # Global pooling and embedding layer  
+        self.global_pool = nn.AdaptiveAvgPool3d((1, 1, 1))  
+        self.fc = nn.Sequential(
+            nn.Linear(out_channels*8, embedding_dim),
+            nn.BatchNorm1d(embedding_dim)
+        )
         
     def make_layer(self, in_channels : int, out_channels : int, num_blocks : int, stride : int = 1) -> nn.Sequential:  
         layers = []  
@@ -74,7 +73,7 @@ class ResNet3D(nn.Module):
         x = self.layer3(x)  
         x = self.layer4(x)  
         
-        x = self.avgpool(x)  
+        x = self.global_pool(x)  
         x = x.view(x.size(0), -1)  
         x = self.fc(x)  
         

@@ -1,14 +1,7 @@
 import platform
 from dataclasses import dataclass
 
-seed = 0
-
-# Gender
-@dataclass(frozen=True)
-class Gender:
-    MALE   : int = 1
-    FEMALE : int = 2
-    UNSPECIFIED  : int = 0
+seed = 24
 
 # Is mild/major depression
 @dataclass(frozen=True)
@@ -21,10 +14,10 @@ class IS_MD:
 class Train_Config:
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 24 # 22 
+    batch_size: int = 24
     num_workers: int = 6 if platform.system() == 'Linux' else 0
     epochs: range = range(10)
-    lr: float = 1e-5 
+    lr: float = 2e-5
     latent_embedding_dim: int = 768 
     use_lgd: bool = True # True False
 

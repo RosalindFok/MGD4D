@@ -8,6 +8,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import Any
 from pathlib import Path
+from itertools import chain
 
 from metrics import Metrics
 from config import Train_Config, seed
@@ -47,6 +48,29 @@ def move_to_device(data: Any, device: torch.device) -> Any:
         return data
 
 def write_csv(filename : Path, head : list[Any], data : list[list[Any]]) -> None:
+    """  
+    Writes data to a CSV file with the specified header.  
+
+    This function takes a file path, a list of column headers, and a 2D list of data,  
+    and writes them into a CSV file. Each inner list in the 'data' parameter represents   
+    a column, and data is written in column-wise order to produce a correctly formatted  
+    CSV file.  
+
+    Args:  
+        filename (Path):  
+            The path to the CSV file where data will be written.  
+        head (list[Any]):  
+            A list of column headers, each representing a column in the CSV file.   
+            Length must match the number of columns in 'data'.  
+        data (list[list[Any]]):  
+            A 2D list where each inner list represents a column of data.   
+            Each column (inner list) should have the same length.  
+
+    Raises:  
+        AssertionError:  
+            If the length of 'head' does not match the number of columns in 'data'.   
+            This ensures that each header corresponds to one column of data.  
+    """
     assert len(head) == len(data), f"Head length {len(head)} does not match data length {len(data)}"
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -66,6 +90,7 @@ def train(device : torch.device,
     train_loss_list = []
     mem_reserved_list = []
     probability_list = []
+    prediction_list = []
     target_list = []
     for batches in tqdm(dataloader, desc="Training", leave=True):
         # move to GPU
@@ -73,14 +98,13 @@ def train(device : torch.device,
         fc_matrices = move_to_device(batches.fc, device)
         vbm_matrices = move_to_device(batches.vbm, device)
         target = move_to_device(batches.target, device).flatten()
-        onehot = torch.nn.functional.one_hot(target.long(), num_classes=2).float()
+        target = target.long().flatten()
         # forward
         output =  model(structural_input_dict=vbm_matrices,
                         functional_input_dict=fc_matrices,
                         information_input_dict=auxi_info)
-        assert output.shape == onehot.shape, f"Output shape {output.shape} does not match onehot shape {onehot.shape}"
         # loss
-        loss = loss_fn(output, onehot)
+        loss = loss_fn(input=output, target=target)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
         train_loss_list.append(loss.item())
         # 3 steps of back propagation
@@ -90,15 +114,19 @@ def train(device : torch.device,
         # monitor GPU memory usage
         total_memory, mem_reserved = get_GPU_memory_usage()
         mem_reserved_list.append(mem_reserved)
-        probability_list.extend(nn.Softmax(dim=-1)(output)[:, 1].detach().cpu().numpy()) 
-        target_list.extend(target.detach().cpu().numpy())
-        subjid_list.extend(batches.id)
+        # logging
+        if log:
+            output = output.softmax(dim=-1)
+            probability_list.extend(output[:, 1].detach().cpu().numpy()) 
+            prediction_list.extend(output.argmax(dim=-1).detach().cpu().numpy())
+            target_list.extend(target.detach().cpu().numpy())
+            subjid_list.extend(batches.id)
     print(f"Train loss: {sum(train_loss_list)/len(train_loss_list)}, GPU memory usage: {max(mem_reserved_list):.2f}GB / {total_memory:.2f}GB")
     
     if log:
         probability = np.array(probability_list).flatten()
-        target = np.array(target_list).astype(int)
-        prediction = (probability >= 0.5).astype(int)
+        target = np.array(target_list).astype(int).flatten()
+        prediction = np.array(prediction_list).astype(int).flatten()
         metrics = {
             "AUC" : Metrics.AUC(prob=probability, true=target),
             "ACC" : Metrics.ACC(pred=prediction, true=target),
@@ -121,6 +149,7 @@ def test(device : torch.device,
     subjid_list = []
     target_list = []
     probability_list = []
+    prediction_list = []
     with torch.no_grad():
         desc = "Validating" if is_test <= 0 else "Testing"
         for batches in tqdm(dataloader, desc=desc, leave=True):
@@ -132,13 +161,16 @@ def test(device : torch.device,
             output =  model(structural_input_dict=vbm_matrices,
                             functional_input_dict=fc_matrices,
                             information_input_dict=auxi_info)
+            # add to lists
+            output = output.softmax(dim=-1)
             target_list.extend(batches.target.numpy())
-            probability_list.extend(nn.Softmax(dim=-1)(output)[:, 1].cpu().numpy()) 
+            probability_list.extend(output[:, 1].cpu().numpy()) 
+            prediction_list.extend(output.argmax(dim=-1).cpu().numpy())
             subjid_list.extend(batches.id)
     
     target = np.array(target_list).astype(int).flatten() 
     probability = np.array(probability_list).astype(float).flatten() 
-    prediction = (probability >= 0.5).astype(int).flatten() # it is the same as argmax()
+    prediction = np.array(prediction_list).astype(int).flatten()
     assert target.shape == probability.shape == prediction.shape, f"{target.shape} != {probability.shape} != {prediction.shape}"
     metrics = {
         "AUC" : Metrics.AUC(prob=probability, true=target),
@@ -163,15 +195,6 @@ def test(device : torch.device,
         write_csv(filename=Path(f"fold_{is_test}_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
 
-class CombinedLoss(nn.modules.loss._Loss):
-    def __init__(self, )->None:
-        super().__init__()
-        self.cross_entropy = nn.CrossEntropyLoss()
-        self.bce = nn.BCEWithLogitsLoss()
-    def forward(self, output : torch.Tensor, target : torch.Tensor) -> torch.Tensor:
-        # output : (batch_size, 2)
-        # target : (batch_size, 2)
-        return self.cross_entropy(output, target) + self.bce(output.flatten(), target.flatten())
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--fold', type=str)
@@ -179,10 +202,9 @@ def main() -> None:
     fold = int(args.fold)
     
     return_dataloaders = get_major_dataloader_via_fold(fold)
-    train_dataloader, test_dataloader = return_dataloaders.train, return_dataloaders.test
+    train_dataloader, test_dataloader, auxi_info = return_dataloaders.train, return_dataloaders.test, return_dataloaders.info
 
     # Shape
-    auxi_info = next(iter(test_dataloader)).info
     fc_matrices = next(iter(test_dataloader)).fc
     vbm_matrices = next(iter(test_dataloader)).vbm
     shapes_dict = {"s" : {k:v.shape[1:] for k,v in vbm_matrices.items()},                   # structural
@@ -197,7 +219,7 @@ def main() -> None:
     print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
 
     # Loss
-    loss_fn = CombinedLoss()
+    loss_fn = nn.CrossEntropyLoss()
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
@@ -224,14 +246,6 @@ def main() -> None:
     del train_dataloader, test_dataloader
     gc.collect()
     torch.cuda.empty_cache()
-
-    # # Write all results
-    # results = defaultdict(dict)
-    # for key, values in test_results.items():
-    #     assert len(values) == Train_Config.n_splits.stop - 1, f"The number of results of {key} = {len(values)} is not equal to the number of folds = {Train_Config.n_splits.stop - 1}."
-    #     results[key] ={"fold" : values, "mean" : np.mean(values)}
-    # with open("all_test_results.json", "w", encoding="utf-8") as f:
-    #     json.dump(results, f, indent=4, ensure_ascii=False)  
 
 if __name__ == "__main__":
     main()

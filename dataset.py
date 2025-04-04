@@ -18,7 +18,7 @@ torch.multiprocessing.set_sharing_strategy("file_system") # to solve the "Runtim
 
 from path import Paths
 from plot import draw_atlas
-from config import IS_MD, Train_Config, Gender, Brain_Network, seed
+from config import IS_MD, Train_Config, Brain_Network, seed
 
 random.seed(seed)
 
@@ -26,6 +26,7 @@ random.seed(seed)
 class Return_Dataloaders:
     train: DataLoader
     test : DataLoader
+    info : dict[str, int]
 
 def load_atlas() -> dict[str, list[str]]:
         """
@@ -202,7 +203,7 @@ class Dataset_Major_Depression(Dataset):
         ID = auxi_info["ID"]
         target = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
         assert target == int(auxi_info["depression"])
-        auxi_info = {k : self.to_tensor(v) for k, v in auxi_info.items() if k not in ["ID", "depression"]}
+        auxi_info = {k : self.to_tensor(v).int() for k, v in auxi_info.items() if k not in ["ID", "depression"]}
 
         # Functional connectivity
         fc_matrices = {}
@@ -243,28 +244,27 @@ class KFold_Major_Depression:
         assert auxi_info_path.exists(), f"Participants info file not found in {rest_meta_mdd_dir_path}"
         # Auxiliary Information: Sex, Age, Education (years)
         # sex: there 3 types in REST-meta-MDD dataset, most of them are female/male, one subject is unspecified
+        # age: 0 is unknown, min=12, max=82
+        # education years: 0 is unknown, min=3, max=23
         with auxi_info_path.open("r") as f:
             all_info = json.load(f) # {sub_id: {key: value, ...}, ...}
-            # age: 0 is unknown, min=12, max=82
-            age_array = np.array([info_dict["Age"] for _, info_dict in all_info.items()])
-            age_array = age_array[age_array > 0]
-            # education years: 0 is unknown, min=3, max=23
-            education_years_array = np.array([info_dict["Education (years)"] for _, info_dict in all_info.items()])
-            education_years_array = education_years_array[education_years_array > 0]
         auxi_info = defaultdict(dict)
+        self.max_value = {}
         for sub_id, info_dict in all_info.items():
             for attribute in ["Sex", "Age", "Education (years)", "ID", "depression"]:
                 assert attribute in info_dict.keys(), f"Attribute {attribute} not found in auxiliary information"
-                if attribute == "Sex":
-                    value = Gender.FEMALE if info_dict["Sex"] == 2 else Gender.MALE if info_dict["Sex"] == 1 else Gender.UNSPECIFIED
-                    value /= max(Gender.FEMALE, Gender.MALE, Gender.UNSPECIFIED)
-                elif attribute == "Age":
-                    value = info_dict[attribute] / age_array.max()
-                elif attribute == "Education (years)":
-                    value = info_dict[attribute] / education_years_array.max()
-                else:
-                    value = info_dict[attribute]
+                value = info_dict[attribute]
                 auxi_info[sub_id][attribute] = value
+                if attribute in ["Sex", "Age", "Education (years)"]:
+                    if attribute not in self.max_value or value > self.max_value[attribute]:  
+                        self.max_value[attribute] = int(value)
+        # site: 1~25, except 4
+        max_val = 0
+        for sub_id, info_dict in auxi_info.items():
+            site = int(info_dict["ID"].split("-")[0][1:])
+            auxi_info[sub_id]["Site"] = site
+            max_val = max(max_val, site)
+        self.max_value["Site"] = max_val
 
         # Functional connectivity
         fc_path_dict = {} 
@@ -292,7 +292,7 @@ class KFold_Major_Depression:
         
     def __data_augmentation__(self, old_list : list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         new_dict = {}
-        for path_dict in tqdm(old_list, desc="Data augmentation", leave=True):
+        for path_dict in tqdm(old_list, desc="Data augmentation", leave=False):
             # functional connectivity: add noise 
             augmented_fc_path = path_dict["fc"].parent / f"{path_dict['fc'].stem}_augmented.npz"
             if not augmented_fc_path.exists():
@@ -374,7 +374,7 @@ class KFold_Major_Depression:
         # set persistent_workers=True to avoid OOM
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
         test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
-        return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader)
+        return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader, info=self.max_value)
         return return_dataloaders
 
 # global_signal is better than not    

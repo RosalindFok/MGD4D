@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from config import Train_Config
 
-json_files = Path(".").glob('fold_*.json')
+json_files = sorted(Path(".").glob('fold_*.json'))
 result = defaultdict(list)
 for json_file in json_files:
     with open(json_file, 'r') as f:
