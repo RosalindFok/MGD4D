@@ -1,7 +1,7 @@
 import platform
 from dataclasses import dataclass
 
-seed = 24
+seed = 42
 
 # Is mild/major depression
 @dataclass(frozen=True)
@@ -12,24 +12,25 @@ class IS_MD:
 # DataLoader
 @dataclass(frozen=True)
 class Train_Config:
+    # GPU memory usage: 36.82GB / 39.38GB
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 24
+    batch_size: int = 24 
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(10)
-    lr: float = 2e-5
+    epochs: range = range(20)
+    lr: float = 5e-5
     latent_embedding_dim: int = 768 
-    use_lgd: bool = True # True False
+    use_lgd: bool = True # True False  
 
-# @dataclass(frozen=True)
-# class Train_Encoder:
-#     n_splits: range = range(1,6) # 5 folds
-#     shuffle: bool = False
-#     batch_size: int = 128
-#     num_workers: int = 6 if platform.system() == 'Linux' else 0
-#     epochs: range = range(30)
-#     lr: float = 1e-5
-#     latent_embedding_dim: int = 768
+@dataclass(frozen=True)
+class Train_Encoder:
+    n_splits: range = range(1,6) # 5 folds
+    shuffle: bool = False
+    batch_size: int = 128
+    num_workers: int = 6 if platform.system() == 'Linux' else 0
+    epochs: range = range(30)
+    lr: float = 1e-5
+    latent_embedding_dim: int = 768
     
 # Brain network
 @dataclass(frozen=True)

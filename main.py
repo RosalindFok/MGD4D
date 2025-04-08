@@ -8,7 +8,6 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import Any
 from pathlib import Path
-from itertools import chain
 
 from metrics import Metrics
 from config import Train_Config, seed
@@ -92,19 +91,18 @@ def train(device : torch.device,
     probability_list = []
     prediction_list = []
     target_list = []
-    for batches in tqdm(dataloader, desc="Training", leave=True):
+    for batches in tqdm(dataloader, desc="Training", leave=False):
         # move to GPU
         auxi_info = move_to_device(batches.info, device)
         fc_matrices = move_to_device(batches.fc, device)
         vbm_matrices = move_to_device(batches.vbm, device)
-        target = move_to_device(batches.target, device).flatten()
-        target = target.long().flatten()
+        target = move_to_device(batches.target, device).long().flatten()
         # forward
         output =  model(structural_input_dict=vbm_matrices,
                         functional_input_dict=fc_matrices,
                         information_input_dict=auxi_info)
         # loss
-        loss = loss_fn(input=output, target=target)
+        loss = loss_fn(input=output["logits"], target=target) + output["mse"] if Train_Config.use_lgd else loss_fn(input=output["logits"], target=target)
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
         train_loss_list.append(loss.item())
         # 3 steps of back propagation
@@ -116,12 +114,12 @@ def train(device : torch.device,
         mem_reserved_list.append(mem_reserved)
         # logging
         if log:
-            output = output.softmax(dim=-1)
-            probability_list.extend(output[:, 1].detach().cpu().numpy()) 
-            prediction_list.extend(output.argmax(dim=-1).detach().cpu().numpy())
+            probability = output["logits"].softmax(dim=-1)
+            probability_list.extend(probability[:, -1].detach().cpu().numpy()) 
+            prediction_list.extend(probability.argmax(dim=-1).detach().cpu().numpy())
             target_list.extend(target.detach().cpu().numpy())
             subjid_list.extend(batches.id)
-    print(f"Train loss: {sum(train_loss_list)/len(train_loss_list)}, GPU memory usage: {max(mem_reserved_list):.2f}GB / {total_memory:.2f}GB")
+    print(f"Train Loss: {sum(train_loss_list)/len(train_loss_list)}, GPU memory usage: {max(mem_reserved_list):.2f}GB / {total_memory:.2f}GB")
     
     if log:
         probability = np.array(probability_list).flatten()
@@ -135,37 +133,44 @@ def train(device : torch.device,
             "F1S" : Metrics.F1S(pred=prediction, true=target)
         }
         metrics = {k : float(v) for k, v in metrics.items()}
-        print(f"Train metrics: {metrics}")
-        write_csv(filename=Path(f"epoch_{epoch+1}_train_results.csv"), 
-                  head=["subj", "true", "prob"], data=[subjid_list, target, probability])
+        print(f"Train Metrics: {metrics}")
 
 def test(device : torch.device,
          epoch : int,
          model : nn.Module, 
          dataloader : torch.utils.data.DataLoader,
+         loss_fn : nn.modules.loss._Loss = None, 
          is_test : int = -1, # <=0 for valid, fold>0 for test
-         log : bool = False) -> None:
+         log : bool = False) -> bool:
+    early_stop = False # TODO if needed
     model.eval()
     subjid_list = []
     target_list = []
     probability_list = []
     prediction_list = []
+    if is_test <= 0:
+        valid_loss_list = []
     with torch.no_grad():
         desc = "Validating" if is_test <= 0 else "Testing"
-        for batches in tqdm(dataloader, desc=desc, leave=True):
+        for batches in tqdm(dataloader, desc=desc, leave=False):
             # move to GPU
             auxi_info = move_to_device(batches.info, device)
             fc_matrices = move_to_device(batches.fc, device)
             vbm_matrices = move_to_device(batches.vbm, device)
+            target = move_to_device(batches.target, device).long().flatten()
             # forward
             output =  model(structural_input_dict=vbm_matrices,
                             functional_input_dict=fc_matrices,
                             information_input_dict=auxi_info)
+            if is_test <= 0:
+                loss = loss_fn(input=output["logits"], target=target) + output["mse"] if Train_Config.use_lgd else loss_fn(input=output["logits"], target=target)
+                assert not torch.isnan(loss), f"Loss is NaN: {loss}" 
+                valid_loss_list.append(loss.cpu().item())
             # add to lists
-            output = output.softmax(dim=-1)
-            target_list.extend(batches.target.numpy())
-            probability_list.extend(output[:, 1].cpu().numpy()) 
-            prediction_list.extend(output.argmax(dim=-1).cpu().numpy())
+            probability = output["logits"].softmax(dim=-1)
+            target_list.extend(target.cpu().numpy())
+            probability_list.extend(probability[:, -1].cpu().numpy()) 
+            prediction_list.extend(probability.argmax(dim=-1).cpu().numpy())
             subjid_list.extend(batches.id)
     
     target = np.array(target_list).astype(int).flatten() 
@@ -181,8 +186,12 @@ def test(device : torch.device,
     }
     metrics = {k : float(v) for k, v in metrics.items()}
 
+    if is_test <= 0:
+        valid_loss = sum(valid_loss_list) / len(valid_loss_list)
+
     if log and is_test <= 0:
-        print(f"Valid metrics: {metrics}")
+        print(f"Valid Loss: {valid_loss}")
+        print(f"Valid Metrics: {metrics}")
         plot_confusion_matrix(target, prediction, saved_path=f"epoch_{epoch+1}_valid_confusion_matrix.png")
         write_csv(filename=Path(f"epoch_{epoch+1}_valid_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
@@ -195,6 +204,8 @@ def test(device : torch.device,
         write_csv(filename=Path(f"fold_{is_test}_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
 
+    return early_stop
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--fold', type=str)
@@ -202,7 +213,7 @@ def main() -> None:
     fold = int(args.fold)
     
     return_dataloaders = get_major_dataloader_via_fold(fold)
-    train_dataloader, test_dataloader, auxi_info = return_dataloaders.train, return_dataloaders.test, return_dataloaders.info
+    train_dataloader, test_dataloader, auxi_info, weight = return_dataloaders.train, return_dataloaders.test, return_dataloaders.info, return_dataloaders.weight
 
     # Shape
     fc_matrices = next(iter(test_dataloader)).fc
@@ -219,10 +230,11 @@ def main() -> None:
     print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
 
     # Loss
-    loss_fn = nn.CrossEntropyLoss()
-
+    loss_fn = nn.CrossEntropyLoss(weight=weight.to(device))
+    
     # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=Train_Config.lr)
 
     for epoch in Train_Config.epochs:
         lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
@@ -234,8 +246,10 @@ def main() -> None:
         train(device=device, epoch=epoch, model=model, loss_fn=loss_fn, 
               optimizer=optimizer, dataloader=train_dataloader, log=True)
         # Valid
-        test(device=device, epoch=epoch, model=model, dataloader=test_dataloader, log=True)
-            
+        early_stop = test(device=device, epoch=epoch, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True)
+        if early_stop:
+            break
+
     # Test
     print("Test")
     test(device=device, epoch=epoch, model=model, dataloader=test_dataloader, is_test=fold)

@@ -89,6 +89,9 @@ class Encoder_Functional(nn.Module):
         """
         project to the same dimension of structural embedding
         """
+        # AAL : 6670
+        # HOC : 4560
+        # HOS : 120
         activation = nn.Tanh() 
         if input_dim > output_dim:
             return nn.Sequential(
@@ -357,6 +360,18 @@ class LatentGraphDiffusion(nn.Module):
 
         return output_embeddings_dict
 
+class MLP(nn.Module):
+    def __init__(self, in_features : int, out_features : int):
+        super().__init__()
+        self.layer = nn.Sequential(
+            nn.Linear(in_features=in_features, out_features=out_features),
+            nn.BatchNorm1d(num_features=out_features),
+            nn.Tanh()
+        )
+    
+    def forward(self, x : torch.Tensor) -> torch.Tensor:  
+        return self.layer(x)
+    
 class ResidualBlock(nn.Module):  
     def __init__(self, embedding_dim : int) -> None:  
         super().__init__()  
@@ -372,21 +387,16 @@ class ResidualBlock(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, features_number : int, embedding_dim : int, idx_modal_key : dict[int, tuple[str, str]]) -> None:
         super().__init__()
-        activation = nn.Tanh() # Tanh Softsign
 
         self.decode = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(in_features=(features_number+1)*embedding_dim, out_features=embedding_dim),
-            nn.BatchNorm1d(num_features=embedding_dim),
-            activation,
+            MLP(in_features=(features_number+1)*embedding_dim, out_features=embedding_dim),
             ResidualBlock(embedding_dim),
-            nn.Linear(in_features=embedding_dim, out_features=128),
-            nn.BatchNorm1d(num_features=128),
-            activation,
-            nn.Linear(in_features=128, out_features=16),
-            nn.BatchNorm1d(num_features=16),
-            activation,
-            nn.Linear(in_features=16, out_features=2),
+            MLP(in_features=embedding_dim, out_features=128),
+            ResidualBlock(128),
+            MLP(in_features=128, out_features=16),
+            ResidualBlock(16),
+            MLP(in_features=16, out_features=2),
         )
 
         self.idx_modal_key = idx_modal_key
@@ -404,7 +414,7 @@ class Decoder(nn.Module):
     
 class MGD4MD(nn.Module):
     def __init__(self, info_dict : dict[str, int], shapes_dict : dict[str, dict[str, Any]], 
-                 embedding_dim : int = 512, use_lgd : bool = True) -> None:
+                 embedding_dim : int, use_lgd : bool) -> None:
         super().__init__()
         self.use_lgd = use_lgd
         # index of modal-key
@@ -458,7 +468,7 @@ class MGD4MD(nn.Module):
 
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
                       functional_input_dict : dict[str, torch.Tensor], 
-                      information_input_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+                      information_input_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         # encode
         structural_embeddings_dict = self.encoder_s(structural_input_dict) 
         functional_embeddings_dict = self.encoder_f(functional_input_dict)
@@ -468,14 +478,20 @@ class MGD4MD(nn.Module):
 
         # latent graph diffusion
         if self.use_lgd:
-            original_embeddings_dict = self.__clone_tensor_dict__(latent_embeddings_dict)  
+            mse_sum = 0.0
+            mse_loss = nn.MSELoss()
+            copied_embeddings_dict = self.__clone_tensor_dict__(latent_embeddings_dict)  
             latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
-            for modal, value in latent_embeddings_dict.items():
-                for key, tensor in value.items():
-                    assert tensor.shape == original_embeddings_dict[modal][key].shape, f"{tensor.shape} != {original_embeddings_dict[modal][key].shape}"
-                    latent_embeddings_dict[modal][key] = tensor + original_embeddings_dict[modal][key]
-        
+            for _, (modal, key) in self.idx_modal_key.items():
+                    # latent_embeddings_dict[modal][key] = tensor + copied_embeddings_dict[modal][key]
+                    mse_sum += mse_loss(input=latent_embeddings_dict[modal][key], 
+                                        target=copied_embeddings_dict[modal][key])
+
+            mse_sum /= len(self.idx_modal_key)
+        else:
+            mse_sum = None
+
         # decode
-        output = self.decoder(latent_embeddings_dict, information_embedding_dict)
-       
-        return output
+        logits = self.decoder(latent_embeddings_dict, information_embedding_dict)
+        
+        return {"logits" : logits, "mse" : mse_sum}

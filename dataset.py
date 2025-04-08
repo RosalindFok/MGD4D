@@ -9,7 +9,6 @@ from typing import Any # tuple, list, dict is correct for Python>=3.9
 from pathlib import Path
 from scipy.io import loadmat  
 from functools import partial
-from itertools import zip_longest
 from dataclasses import dataclass
 from sklearn.model_selection import KFold
 from collections import namedtuple, defaultdict 
@@ -27,6 +26,7 @@ class Return_Dataloaders:
     train: DataLoader
     test : DataLoader
     info : dict[str, int]
+    weight : torch.Tensor
 
 def load_atlas() -> dict[str, list[str]]:
         """
@@ -56,6 +56,8 @@ def load_atlas() -> dict[str, list[str]]:
             if not fig_path.exists():
                 draw_atlas(atlas=nib.load(mri_path), saved_path=fig_path)
         return atlas_labels_dict
+
+to_tensor = partial(torch.tensor, dtype=torch.float32)
 
 # class Dataset_Mild_Depression(Dataset):
 #     def __init__(self, md_path_list : list[Path], hc_path_list : list[Path]) -> None:
@@ -166,6 +168,7 @@ def load_atlas() -> dict[str, list[str]]:
 #         assert fold in kfold_md_dir_paths.keys(), f"Unknown fold: {fold}, available folds: {kfold_md_dir_paths.keys()}"
 #         Dataset_Mild_Depression(md_path_list=kfold_md_dir_paths[fold]["train"], hc_path_list=kfold_hc_dir_paths[fold]["train"])
 
+
 # dataclass is not used because dict[tensor] is not supported by PyTorch
 MDD_Returns = namedtuple("MDD_Returns", ["id", "info", "fc", "vbm", "target"]) 
 
@@ -175,7 +178,6 @@ class Dataset_Major_Depression(Dataset):
         super().__init__()
         self.path_list = path_list
         self.brain_network_name = brain_network_name
-        self.to_tensor = partial(torch.tensor, dtype=torch.float32)
     
     def __subgraph__(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
@@ -203,7 +205,7 @@ class Dataset_Major_Depression(Dataset):
         ID = auxi_info["ID"]
         target = IS_MD.IS if "-1-" in ID else IS_MD.NO if "-2-" in ID else None
         assert target == int(auxi_info["depression"])
-        auxi_info = {k : self.to_tensor(v).int() for k, v in auxi_info.items() if k not in ["ID", "depression"]}
+        auxi_info = {k : to_tensor(v).int() for k, v in auxi_info.items() if k not in ["ID", "depression"]}
 
         # Functional connectivity
         fc_matrices = {}
@@ -212,7 +214,7 @@ class Dataset_Major_Depression(Dataset):
             # HOC shape: (96, 96)
             # HOS shape: (16, 16)
             matrix = (matrix - np.min(matrix)) / (np.max(matrix) - np.min(matrix))
-            fc_matrices[atlas_name] = self.to_tensor(matrix)
+            fc_matrices[atlas_name] = to_tensor(matrix)
             del matrix
 
         # VBM
@@ -220,11 +222,11 @@ class Dataset_Major_Depression(Dataset):
         for group_name, matrix in np.load(path_dict["vbm"], allow_pickle=True).items():
             # matrix shape: (121, 145, 121)
             matrix = np.clip(matrix, 0, 1)
-            vbm_matrices[group_name] = self.to_tensor(matrix)
+            vbm_matrices[group_name] = to_tensor(matrix)
             del matrix
 
         # target
-        target = self.to_tensor(target)
+        target = to_tensor(target)
 
         return MDD_Returns(
             id=ID, info=auxi_info, fc=fc_matrices, 
@@ -268,7 +270,7 @@ class KFold_Major_Depression:
 
         # Functional connectivity
         fc_path_dict = {} 
-        for sub_dir_path in tqdm(list((rest_meta_mdd_dir_path / dir_name).iterdir()), desc=f"Loading {dir_name}", leave=True):
+        for sub_dir_path in tqdm(list((rest_meta_mdd_dir_path / dir_name).iterdir()), desc=f"Loading {dir_name}", leave=False):
             fc_matrix_path = [x for x in sub_dir_path.glob("fc_matrix.npz")]
             fc_path_dict[sub_dir_path.name] = fc_matrix_path[0]
 
@@ -335,6 +337,7 @@ class KFold_Major_Depression:
             site_dict[split[0]][split[1]].append(subj)
         
         # data augmentation: balance positive and negative samples
+        augmented_ratio = []
         for site, pn_samples in site_dict.items(): # pn: positive/negative
             shortest_key = min(pn_samples, key=lambda k: len(pn_samples[k])) 
             longest_key  = max(pn_samples, key=lambda k: len(pn_samples[k])) 
@@ -342,10 +345,15 @@ class KFold_Major_Depression:
                 difference = min(len(pn_samples[longest_key]) - len(pn_samples[shortest_key]), len(pn_samples[shortest_key]))
                 # randomly select samples from shortest list
                 selected_list = random.sample([x for x in pn_samples[shortest_key]], difference)
+                augmented_ratio.append(len(selected_list) / (len(pn_samples[longest_key]) + len(pn_samples[shortest_key])))
                 selected_dict = self.__data_augmentation__(old_list=[self.paths_dict[x] for x in selected_list])
                 # update the new samples
                 site_dict[site][shortest_key].extend(selected_list)
                 self.paths_dict.update(selected_dict)
+            else: # balance 
+                augmented_ratio.append(0)
+        augmented_ratio = sum(augmented_ratio) / len(augmented_ratio)
+        print(f"Augmented samples size accounts for {augmented_ratio*100:.2f}% of the original samples") # 8.80%
 
         # k-fold
         train_dict, test_dict = defaultdict(list), defaultdict(list)
@@ -357,24 +365,38 @@ class KFold_Major_Depression:
                     test_dict[fold].extend(value[i] for i in test_index)
                     fold += 1
         
-        # shuffle
+        # shuffle and split
+        self.weights = {}
         for fold in Train_Config.n_splits:
             for tag, sample_dict in zip(["train", "test"], [train_dict, test_dict]):
                 positive_samples = [x for x in sample_dict[fold] if "-1-" in x]
                 negative_samples = [x for x in sample_dict[fold] if "-2-" in x]
                 random.shuffle(positive_samples)
                 random.shuffle(negative_samples)
-                kfold_dir_paths[fold][tag] = [self.paths_dict[x] for x in [item for pair in zip_longest(positive_samples, negative_samples) for item in pair if item is not None] ]
-
+                min_len = min(len(positive_samples), len(negative_samples))
+                merged_list = []
+                for i in range(min_len):
+                    merged_list.append(positive_samples[i])
+                    merged_list.append(negative_samples[i])
+                longer_list = positive_samples if len(positive_samples) > len(negative_samples) else negative_samples  
+                extra_elements = longer_list[min_len:] 
+                for extra in extra_elements:
+                    insert_pos = random.randint(0, len(merged_list)) 
+                    merged_list.insert(insert_pos, extra) 
+                kfold_dir_paths[fold][tag] = [self.paths_dict[x] for x in merged_list]
+                if tag == "train": # for CrossEntropyLoss
+                    self.weights[fold] = [len(negative_samples) / (len(positive_samples) + len(negative_samples)), 
+                                          len(positive_samples) / (len(positive_samples) + len(negative_samples))]
         return kfold_dir_paths
 
-    def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> tuple[DataLoader, DataLoader]:
+    def get_dataloader_via_fold(self, fold : int, batch_size : int = Train_Config.batch_size) -> Return_Dataloaders:
         train_dataset = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["train"], brain_network_name=Brain_Network.whole)
         test_dataset  = Dataset_Major_Depression(path_list=self.kfold_dir_paths[fold]["test"] , brain_network_name=Brain_Network.whole)
         # set persistent_workers=True to avoid OOM
-        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
-        test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=False, pin_memory=True, persistent_workers=True)
-        return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader, info=self.max_value)
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=Train_Config.shuffle, pin_memory=True, persistent_workers=True)
+        test_dataloader  = DataLoader(test_dataset,  batch_size=batch_size, num_workers=Train_Config.num_workers, shuffle=Train_Config.shuffle, pin_memory=True, persistent_workers=True)
+        return_dataloaders = Return_Dataloaders(train=train_dataloader, test=test_dataloader, 
+                                                info=self.max_value, weight=to_tensor(self.weights[fold]))
         return return_dataloaders
 
 # global_signal is better than not    
