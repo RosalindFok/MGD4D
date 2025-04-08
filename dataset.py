@@ -336,7 +336,7 @@ class KFold_Major_Depression:
             split = subj.split("-")
             site_dict[split[0]][split[1]].append(subj)
         
-        # data augmentation: balance positive and negative samples
+        # data augmentation: balance positive/negative samples and avoid ValueError: Expected more than 1 value per channel when training, got input size torch.Size([1, *])
         augmented_ratio = []
         for site, pn_samples in site_dict.items(): # pn: positive/negative
             shortest_key = min(pn_samples, key=lambda k: len(pn_samples[k])) 
