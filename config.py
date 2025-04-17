@@ -9,29 +9,65 @@ class IS_MD:
     NO : int = 0
     IS : int = 1
 
-# DataLoader
 @dataclass(frozen=True)
-class Train_Config:
-    # GPU memory usage: 36.82GB / 39.38GB
-    n_splits: range = range(1,6) # 5 folds
-    shuffle: bool = False
-    batch_size: int = 24 
-    num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(20)
-    lr: float = 5e-5
-    latent_embedding_dim: int = 768 
-    use_lgd: bool = True # True False  
+class Gender:
+    MALE : int = 1
+    FEMALE : int = 2
+    UNSPECIFIED : int = 0
 
 @dataclass(frozen=True)
-class Train_Encoder:
+class Basic_Config:
+    # for Dataloader
+    batch_size: int
+    # for training
+    epochs: range
+    lr: float
+    latent_embedding_dim: int
+    use_batchnorm: bool
+    # for ablation
+    use_lgd: bool  # True False
+    use_modal: str # s-structural f-functional sf-structural+functional
+    info: str
+
+# REST_meta_MDD   
+Major_Depression_Config = Basic_Config(
+    batch_size=24,
+    epochs=range(20),
+    lr=5e-5,
+    latent_embedding_dim=768,
+    use_batchnorm=True,
+    use_lgd=True, 
+    use_modal="sf".lower(),
+    info="major"
+)
+
+# Cambridge  ds002748 ds003007
+Mild_Depression_Config = Basic_Config(
+    batch_size=16,
+    epochs=range(20),
+    lr=5e-5,
+    latent_embedding_dim=1024,
+    use_batchnorm=False,
+    use_lgd=True,
+    use_modal="sf".lower(),
+    info="mild"
+)
+
+# Hyperparameters
+@dataclass(frozen=True)
+class Configs:
+    # Dataloader
     n_splits: range = range(1,6) # 5 folds
     shuffle: bool = False
-    batch_size: int = 128
     num_workers: int = 6 if platform.system() == 'Linux' else 0
-    epochs: range = range(30)
-    lr: float = 1e-5
-    latent_embedding_dim: int = 768
     
+    # different datasets have different configs
+    # Major Depression: GPU memory usage: 36.82GB / 39.38GB
+    # dataset: Basic_Config = Major_Depression_Config
+
+    # Mild Depression:
+    dataset: Basic_Config = Mild_Depression_Config
+
 # Brain network
 @dataclass(frozen=True)
 class Brain_Network:

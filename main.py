@@ -10,14 +10,16 @@ from typing import Any
 from pathlib import Path
 
 from metrics import Metrics
-from config import Train_Config, seed
+from config import Configs, seed
 from plot import plot_confusion_matrix
-from dataset import get_major_dataloader_via_fold
 from models import device, MGD4MD, get_GPU_memory_usage
+from dataset import get_major_dataloader_via_fold, get_mild_dataloader_via_fold
 
 np.random.seed(seed)
 torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)  
+if torch.cuda.is_available():  
+    torch.cuda.manual_seed(seed) 
+    torch.cuda.manual_seed_all(seed)  
 
 def move_to_device(data: Any, device: torch.device) -> Any:  
     """Recursively moves all torch.Tensor objects in a nested structure to the specified device.  
@@ -94,15 +96,16 @@ def train(device : torch.device,
     for batches in tqdm(dataloader, desc="Training", leave=False):
         # move to GPU
         auxi_info = move_to_device(batches.info, device)
-        fc_matrices = move_to_device(batches.fc, device)
-        vbm_matrices = move_to_device(batches.vbm, device)
+        f_matrices = move_to_device(batches.func, device)
+        s_matrices = move_to_device(batches.anat, device)
         target = move_to_device(batches.target, device).long().flatten()
         # forward
-        output =  model(structural_input_dict=vbm_matrices,
-                        functional_input_dict=fc_matrices,
+        output =  model(structural_input_dict=s_matrices,
+                        functional_input_dict=f_matrices,
                         information_input_dict=auxi_info)
         # loss
-        loss = loss_fn(input=output["logits"], target=target) + output["mse"] if Train_Config.use_lgd else loss_fn(input=output["logits"], target=target)
+        loss = loss_fn(cet_input=output["logits"],    cet_target=target,
+                       mse_input=output["mse_input"], mse_target=output["mse_target"])
         assert not torch.isnan(loss), f"Loss is NaN: {loss}"
         train_loss_list.append(loss.item())
         # 3 steps of back propagation
@@ -115,16 +118,18 @@ def train(device : torch.device,
         # logging
         if log:
             probability = output["logits"].softmax(dim=-1)
-            probability_list.extend(probability[:, -1].detach().cpu().numpy()) 
+            probability_list.extend(probability[:, 1].detach().cpu().numpy()) 
             prediction_list.extend(probability.argmax(dim=-1).detach().cpu().numpy())
             target_list.extend(target.detach().cpu().numpy())
             subjid_list.extend(batches.id)
+    
     print(f"Train Loss: {sum(train_loss_list)/len(train_loss_list)}, GPU memory usage: {max(mem_reserved_list):.2f}GB / {total_memory:.2f}GB")
     
     if log:
         probability = np.array(probability_list).flatten()
         target = np.array(target_list).astype(int).flatten()
         prediction = np.array(prediction_list).astype(int).flatten()
+        assert target.shape == probability.shape == prediction.shape, f"{target.shape}!= {probability.shape}!= {prediction.shape}"
         metrics = {
             "AUC" : Metrics.AUC(prob=probability, true=target),
             "ACC" : Metrics.ACC(pred=prediction, true=target),
@@ -137,39 +142,40 @@ def train(device : torch.device,
 
 def test(device : torch.device,
          epoch : int,
+         fold : int,
          model : nn.Module, 
          dataloader : torch.utils.data.DataLoader,
-         loss_fn : nn.modules.loss._Loss = None, 
-         is_test : int = -1, # <=0 for valid, fold>0 for test
-         log : bool = False) -> bool:
+         loss_fn : nn.modules.loss._Loss, 
+         log : bool,
+         is_test : bool ) -> bool:
     early_stop = False # TODO if needed
     model.eval()
     subjid_list = []
     target_list = []
     probability_list = []
     prediction_list = []
-    if is_test <= 0:
-        valid_loss_list = []
+    valid_loss_list = []
     with torch.no_grad():
-        desc = "Validating" if is_test <= 0 else "Testing"
+        desc = "Testing" if is_test else "Validating"
         for batches in tqdm(dataloader, desc=desc, leave=False):
             # move to GPU
             auxi_info = move_to_device(batches.info, device)
-            fc_matrices = move_to_device(batches.fc, device)
-            vbm_matrices = move_to_device(batches.vbm, device)
+            f_matrices = move_to_device(batches.func, device)
+            s_matrices = move_to_device(batches.anat, device)
             target = move_to_device(batches.target, device).long().flatten()
             # forward
-            output =  model(structural_input_dict=vbm_matrices,
-                            functional_input_dict=fc_matrices,
+            output =  model(structural_input_dict=s_matrices,
+                            functional_input_dict=f_matrices,
                             information_input_dict=auxi_info)
-            if is_test <= 0:
-                loss = loss_fn(input=output["logits"], target=target) + output["mse"] if Train_Config.use_lgd else loss_fn(input=output["logits"], target=target)
-                assert not torch.isnan(loss), f"Loss is NaN: {loss}" 
-                valid_loss_list.append(loss.cpu().item())
+            # loss without back propagation
+            loss = loss_fn(cet_input=output["logits"],    cet_target=target,
+                           mse_input=output["mse_input"], mse_target=output["mse_target"])
+            assert not torch.isnan(loss), f"Loss is NaN: {loss}" 
+            valid_loss_list.append(loss.cpu().item())
             # add to lists
             probability = output["logits"].softmax(dim=-1)
             target_list.extend(target.cpu().numpy())
-            probability_list.extend(probability[:, -1].cpu().numpy()) 
+            probability_list.extend(probability[:, 1].cpu().numpy()) 
             prediction_list.extend(probability.argmax(dim=-1).cpu().numpy())
             subjid_list.extend(batches.id)
     
@@ -186,80 +192,99 @@ def test(device : torch.device,
     }
     metrics = {k : float(v) for k, v in metrics.items()}
 
-    if is_test <= 0:
-        valid_loss = sum(valid_loss_list) / len(valid_loss_list)
+    # TODO early stop 
+    valid_loss = sum(valid_loss_list) / len(valid_loss_list)
+    # if valid_loss and Configs.dataset.use_lgd < 0.4:
+    #     early_stop = True
 
-    if log and is_test <= 0:
+    if log and not is_test: # valid
         print(f"Valid Loss: {valid_loss}")
         print(f"Valid Metrics: {metrics}")
-        plot_confusion_matrix(target, prediction, saved_path=f"epoch_{epoch+1}_valid_confusion_matrix.png")
-        write_csv(filename=Path(f"epoch_{epoch+1}_valid_results.csv"),
+        plot_confusion_matrix(target, prediction, saved_path=f"fold_{fold}_epoch_{epoch+1}_valid_confusion_matrix.png")
+        write_csv(filename=Path(f"fold_{fold}_epoch_{epoch+1}_valid_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
     
-    if is_test > 0: # Test
+    if is_test: # test
         print(f"Test metrics: {metrics}")
-        plot_confusion_matrix(target, prediction, saved_path=f"fold_{is_test}_confusion_matrix.png")
-        with open(f"fold_{is_test}_results.json", "w", encoding="utf-8") as f:
+        plot_confusion_matrix(target, prediction, saved_path=f"fold_{fold}_test_confusion_matrix.png")
+        with open(f"fold_{fold}_test_results.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=4, ensure_ascii=False)
-        write_csv(filename=Path(f"fold_{is_test}_results.csv"),
+        write_csv(filename=Path(f"fold_{fold}_test_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
 
     return early_stop
 
+class Combined_Loss(nn.modules.loss._Loss):
+    def __init__(self, cet_weight : torch.Tensor, use_mse : bool) -> None:
+        super().__init__()
+        self.cet_loss = nn.CrossEntropyLoss(weight=cet_weight)
+        self.mse_loss = nn.MSELoss()
+        self.use_mse = use_mse
+    
+    def forward(self, cet_input : torch.Tensor, cet_target : torch.Tensor, 
+                      mse_input : torch.Tensor, mse_target : torch.Tensor) -> torch.Tensor:
+        assert cet_input is not None and cet_target is not None, "CET input and target must not be None"
+        cet_loss = self.cet_loss(input=cet_input, target=cet_target)
+        if self.use_mse:
+            assert mse_input is not None and mse_target is not None, "MSE input and target must not be None"
+            mse_loss = self.mse_loss(input=mse_input, target=mse_target)
+        else:
+            mse_loss = torch.tensor(0.0, device=cet_input.device)
+        return cet_loss + mse_loss
+        
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--fold', type=str)
     args = parser.parse_args()
     fold = int(args.fold)
     
-    return_dataloaders = get_major_dataloader_via_fold(fold)
+    # Dataloaders
+    if Configs.dataset.info == "major":
+        return_dataloaders = get_major_dataloader_via_fold(fold)
+    elif Configs.dataset.info == "mild":
+        return_dataloaders = get_mild_dataloader_via_fold(fold)
+    else:
+        raise ValueError(f"Invalid dataset info: {Configs.dataset.info}")
     train_dataloader, test_dataloader, auxi_info, weight = return_dataloaders.train, return_dataloaders.test, return_dataloaders.info, return_dataloaders.weight
-
-    # Shape
-    fc_matrices = next(iter(test_dataloader)).fc
-    vbm_matrices = next(iter(test_dataloader)).vbm
-    shapes_dict = {"s" : {k:v.shape[1:] for k,v in vbm_matrices.items()},                   # structural
-                   "f" : {k:v.shape[1]*(v.shape[1]-1)//2 for k, v in fc_matrices.items()}}  # functional
+    # Shapes
+    f_matrices = next(iter(test_dataloader)).func
+    s_matrices = next(iter(test_dataloader)).anat
+    shapes_dict = {"s" : {k:v.shape[1:] for k,v in s_matrices.items()},                   # structural
+                   "f" : {k:v.shape[1]*(v.shape[1]-1)//2 for k, v in f_matrices.items()}} # functional
 
     # Model
     model = MGD4MD(info_dict=auxi_info,
                    shapes_dict=shapes_dict,
-                   embedding_dim=Train_Config.latent_embedding_dim,
-                   use_lgd=Train_Config.use_lgd).to(device)
+                   embedding_dim=Configs.dataset.latent_embedding_dim,
+                   use_batchnorm=Configs.dataset.use_batchnorm,
+                   use_lgd=Configs.dataset.use_lgd,
+                   use_modal=Configs.dataset.use_modal).to(device)
     trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"The number of trainable parametes of {model.__class__.__name__} is {trainable_parameters}.")
 
     # Loss
-    loss_fn = nn.CrossEntropyLoss(weight=weight.to(device))
-    
-    # Optimizer
-    # optimizer = torch.optim.Adam(model.parameters(), lr=Train_Config.lr)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=Train_Config.lr)
+    loss_fn = Combined_Loss(cet_weight=weight.to(device), use_mse=Configs.dataset.use_lgd)
 
-    for epoch in Train_Config.epochs:
-        lr = Train_Config.lr*((1-epoch/Train_Config.epochs.stop)**0.9)
+    # Optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=Configs.dataset.lr)
+
+    for epoch in Configs.dataset.epochs:
+        # learning rate decay
+        lr = Configs.dataset.lr*((1-epoch/Configs.dataset.epochs.stop)**0.9)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        print(f"\nFold {fold}/{Train_Config.n_splits.stop-1}, Epoch {epoch + 1}/{Train_Config.epochs.stop}")
+        print(f"\nFold {fold}/{Configs.n_splits.stop-1}, Epoch {epoch + 1}/{Configs.dataset.epochs.stop}")
         # Train
-        train(device=device, epoch=epoch, model=model, loss_fn=loss_fn, 
-              optimizer=optimizer, dataloader=train_dataloader, log=True)
+        train(device=device, epoch=epoch, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader, log=True)
         # Valid
-        early_stop = test(device=device, epoch=epoch, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True)
+        early_stop = test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=False)
         if early_stop:
             break
-
+    
     # Test
     print("Test")
-    test(device=device, epoch=epoch, model=model, dataloader=test_dataloader, is_test=fold)
-    
-
-    del model, optimizer, loss_fn
-    del auxi_info, fc_matrices, vbm_matrices
-    del train_dataloader, test_dataloader
-    gc.collect()
-    torch.cuda.empty_cache()
+    test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=True)
 
 if __name__ == "__main__":
     main()

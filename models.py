@@ -42,11 +42,32 @@ device = devices[0]
 devices_num = len(devices)
 
 def get_GPU_memory_usage() -> tuple[float, float]:
+    """  
+    Retrieves the total and reserved GPU memory usage in gigabytes (GB) for the current device.  
+
+    This function checks if a CUDA-capable GPU is available. If so, it calculates and returns:  
+    1. The total memory capacity of the GPU.  
+    2. The currently reserved (allocated) memory by the application.  
+
+    If no GPU is available, both values default to 0.0.  
+
+    Returns:  
+        tuple[float, float]:   
+            A tuple containing:  
+                - total_memory (float): The total memory capacity of the current GPU device in GB.  
+                - mem_reserved (float): The reserved memory on the current GPU device in GB.  
+
+    Example:  
+        >>> total, reserved = get_GPU_memory_usage()  
+        >>> print(f"Total Memory: {total} GB, Reserved Memory: {reserved} GB")  
+    """
     if torch.cuda.is_available():  
         current_device = torch.cuda.current_device()  
         mem_reserved = torch.cuda.memory_reserved(current_device) / (1024 ** 3)                     # GB  
         total_memory = torch.cuda.get_device_properties(current_device).total_memory / (1024 ** 3)  # GB  
         return total_memory, mem_reserved
+    else:
+        return 0.0, 0.0
 
 class Encoder_Structure(nn.Module):
     """
@@ -58,22 +79,23 @@ class Encoder_Structure(nn.Module):
             k : ResNet.ResNet3D(embedding_dim=embedding_dim) for k in matrices_shape
         }) 
 
-    def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
         assert len(input_dict) == len(self.resnets), f"Input dictionary size ({len(input_dict)}) must match number of ResNet models ({len(self.resnets)})"
         output_dict = {}
         for key, tensor in input_dict.items():
             output_dict[key] = self.resnets[key](tensor.unsqueeze(1))
-        return output_dict
+        return {"s" : output_dict}
 
 
 class Encoder_Functional(nn.Module):
     """
     Embedding Layer + Project Layer: 2D functional matrices -> 1D embedding
     """
-    def __init__(self, functional_embeddings_shape : dict[str, int], target_dim : int) -> None:
+    def __init__(self, functional_embeddings_shape : dict[str, int], target_dim : int, use_batchnorm : bool) -> None:
         super().__init__()
         self.projectors = nn.ModuleDict({
-            k: self.__make_projector__(input_dim=v, output_dim=target_dim) for k, v in functional_embeddings_shape.items()
+            k: self.__make_projector__(input_dim=v, output_dim=target_dim, use_batchnorm=use_batchnorm) 
+            for k, v in functional_embeddings_shape.items()
         })
 
     def __get_triu__(self, tensor : torch.Tensor) -> torch.Tensor:
@@ -85,30 +107,43 @@ class Encoder_Functional(nn.Module):
         mask = torch.triu(torch.ones(matrix_size, matrix_size, device=tensor.device), diagonal=1).bool()
         return tensor[:, mask]
     
-    def __make_projector__(self, input_dim : int, output_dim : int) -> nn.Module:
+    def __make_projector__(self, input_dim : int, output_dim : int, use_batchnorm : bool) -> nn.Module:
         """
         project to the same dimension of structural embedding
         """
         # AAL : 6670
         # HOC : 4560
         # HOS : 120
+        # Brainnetome: 30135
         activation = nn.Tanh() 
-        if input_dim > output_dim:
-            return nn.Sequential(
+        if input_dim >= 10 * output_dim:
+            layers = [  
+                nn.Linear(input_dim, output_dim * 16),  
+                nn.BatchNorm1d(output_dim * 16) if use_batchnorm else nn.Identity(),  
+                activation,  
+                nn.Linear(output_dim * 16, output_dim * 4),  
+                nn.BatchNorm1d(output_dim * 4) if use_batchnorm else nn.Identity(),  
+                activation,  
+                nn.Linear(output_dim * 4, output_dim),  
+            ] 
+            return nn.Sequential(*layers)
+        elif input_dim < 10 * output_dim and input_dim > output_dim:
+            layers = [
                 nn.Linear(input_dim, 2048),
-                nn.BatchNorm1d(2048),
+                nn.BatchNorm1d(2048) if use_batchnorm else nn.Identity(),
                 activation,
                 nn.Linear(2048, output_dim),
-            )
+            ]
+            return nn.Sequential(*layers)
         else:
             return nn.Sequential(
                 nn.Linear(input_dim, output_dim),
             )
     
-    def forward(self, input_dict : dict[str, torch.Tensor]) -> torch.Tensor:
+    def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
         output_dict = {k:self.__get_triu__(v) for k, v in input_dict.items()}
         output_dict = {k:self.projectors[k](v) for k, v in output_dict.items()}
-        return output_dict
+        return {"f" : output_dict}
 
 
 class Encoder_Information(nn.Module):
@@ -128,6 +163,7 @@ class Encoder_Information(nn.Module):
     def forward(self, input_dict : dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         embedding = torch.cat([self.embedding[k](input_dict[k]) for k in self.keys], dim=1)
         return {''.join(self.keys) : embedding}
+
 
 class LatentGraphDiffusion(nn.Module):
     def __init__(self, embedding_dim : int, idx_modal_key : dict[str, dict[str, Any]], 
@@ -361,42 +397,38 @@ class LatentGraphDiffusion(nn.Module):
         return output_embeddings_dict
 
 class MLP(nn.Module):
-    def __init__(self, in_features : int, out_features : int):
+    def __init__(self, in_features : int, out_features : int, use_batchnorm : bool) -> None:
         super().__init__()
-        self.layer = nn.Sequential(
-            nn.Linear(in_features=in_features, out_features=out_features),
-            nn.BatchNorm1d(num_features=out_features),
-            nn.Tanh()
-        )
+        layers = [nn.Linear(in_features=in_features, out_features=out_features)]
+        if use_batchnorm:
+            layers.append(nn.BatchNorm1d(num_features=out_features))
+        layers.append(nn.Tanh())
+        self.mlp = nn.Sequential(*layers)
     
     def forward(self, x : torch.Tensor) -> torch.Tensor:  
-        return self.layer(x)
+        return self.mlp(x)
     
 class ResidualBlock(nn.Module):  
-    def __init__(self, embedding_dim : int) -> None:  
+    def __init__(self, embedding_dim : int, use_batchnorm : bool) -> None:  
         super().__init__()  
-        self.layer = nn.Sequential(  
-            nn.Linear(in_features=embedding_dim, out_features=embedding_dim),  
-            nn.BatchNorm1d(num_features=embedding_dim),  
-            nn.Tanh()
-        )  
+        self.mlp = MLP(in_features=embedding_dim, out_features=embedding_dim, use_batchnorm=use_batchnorm)
     
     def forward(self, x : torch.Tensor) -> torch.Tensor:  
-        return x + self.layer(x) 
+        return x + self.mlp(x) 
     
 class Decoder(nn.Module):
-    def __init__(self, features_number : int, embedding_dim : int, idx_modal_key : dict[int, tuple[str, str]]) -> None:
+    def __init__(self, features_number : int, embedding_dim : int, idx_modal_key : dict[int, tuple[str, str]], use_batchnorm : bool) -> None:
         super().__init__()
 
         self.decode = nn.Sequential(
             nn.Flatten(),
-            MLP(in_features=(features_number+1)*embedding_dim, out_features=embedding_dim),
-            ResidualBlock(embedding_dim),
-            MLP(in_features=embedding_dim, out_features=128),
-            ResidualBlock(128),
-            MLP(in_features=128, out_features=16),
-            ResidualBlock(16),
-            MLP(in_features=16, out_features=2),
+            MLP(in_features=(features_number+1)*embedding_dim, out_features=embedding_dim, use_batchnorm=use_batchnorm),
+            ResidualBlock(embedding_dim=embedding_dim, use_batchnorm=use_batchnorm),
+            MLP(in_features=embedding_dim, out_features=128, use_batchnorm=use_batchnorm),
+            ResidualBlock(embedding_dim=128, use_batchnorm=use_batchnorm),
+            MLP(in_features=128, out_features=16, use_batchnorm=use_batchnorm),
+            ResidualBlock(embedding_dim=16, use_batchnorm=use_batchnorm),
+            MLP(in_features=16, out_features=2, use_batchnorm=use_batchnorm),
         )
 
         self.idx_modal_key = idx_modal_key
@@ -414,30 +446,39 @@ class Decoder(nn.Module):
     
 class MGD4MD(nn.Module):
     def __init__(self, info_dict : dict[str, int], shapes_dict : dict[str, dict[str, Any]], 
-                 embedding_dim : int, use_lgd : bool) -> None:
+                 embedding_dim : int, use_batchnorm : bool, use_lgd : bool, use_modal : str) -> None:
         super().__init__()
-        self.use_lgd = use_lgd
         # index of modal-key
         self.idx_modal_key = {}
         idx = 0
         for modal, keys in shapes_dict.items():
-            for key in keys:
-                self.idx_modal_key[idx] = (modal, key)
-                idx += 1
+            if modal in use_modal:
+                for key in keys:
+                    self.idx_modal_key[idx] = (modal, key)
+                    idx += 1
+        
+        # ablation
+        self.use_lgd = use_lgd
+        assert use_modal in ["sf", "s", "f"], f"modal must be one of ['sf', 's', 'f'], but {use_modal} is given"
+        self.use_modal = use_modal
 
         # Encoders
-        self.encoder_s = Encoder_Structure(matrices_shape=shapes_dict["s"], embedding_dim=embedding_dim)
-        self.encoder_f = Encoder_Functional(functional_embeddings_shape=shapes_dict["f"], target_dim=embedding_dim)
+        if "s" in use_modal:
+            self.encoder_s = Encoder_Structure(matrices_shape=shapes_dict["s"], embedding_dim=embedding_dim)
+        if "f" in use_modal:
+            self.encoder_f = Encoder_Functional(functional_embeddings_shape=shapes_dict["f"], target_dim=embedding_dim, use_batchnorm=use_batchnorm)
         self.encoder_i = Encoder_Information(info_dict=info_dict, embedding_dim=embedding_dim)
+
+        # number of features
+        features_number = sum(len(shapes_dict[key]) for key in use_modal)
 
         # LatentGraphDiffusion
         if self.use_lgd:
-            self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, idx_modal_key=self.idx_modal_key,
-                                            features_number=len(shapes_dict["s"])+len(shapes_dict["f"]))
+            self.lgd = LatentGraphDiffusion(embedding_dim=embedding_dim, idx_modal_key=self.idx_modal_key, features_number=features_number)
 
         # Decoder
-        self.decoder = Decoder(features_number=len(shapes_dict["s"])+len(shapes_dict["f"]),
-                               embedding_dim=embedding_dim, idx_modal_key=self.idx_modal_key)
+        self.decoder = Decoder(features_number=features_number,embedding_dim=embedding_dim, 
+                               idx_modal_key=self.idx_modal_key, use_batchnorm=use_batchnorm)
 
     def __clone_tensor_dict__(self, d : Any) -> Any:  
         """Recursively clones all `torch.Tensor` objects in a given data structure.  
@@ -469,29 +510,32 @@ class MGD4MD(nn.Module):
     def forward(self, structural_input_dict : dict[str, torch.Tensor],
                       functional_input_dict : dict[str, torch.Tensor], 
                       information_input_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        latent_embeddings_dict = {}
+        
         # encode
-        structural_embeddings_dict = self.encoder_s(structural_input_dict) 
-        functional_embeddings_dict = self.encoder_f(functional_input_dict)
+        if "s" in self.use_modal:
+            structural_embeddings_dict = self.encoder_s(structural_input_dict) 
+            latent_embeddings_dict.update(structural_embeddings_dict)
+        if "f" in self.use_modal:
+            functional_embeddings_dict = self.encoder_f(functional_input_dict)
+            latent_embeddings_dict.update(functional_embeddings_dict)
         information_embedding_dict = self.encoder_i(information_input_dict) 
-
-        latent_embeddings_dict = {"s" : structural_embeddings_dict, "f" : functional_embeddings_dict}
 
         # latent graph diffusion
         if self.use_lgd:
-            mse_sum = 0.0
-            mse_loss = nn.MSELoss()
             copied_embeddings_dict = self.__clone_tensor_dict__(latent_embeddings_dict)  
             latent_embeddings_dict = self.lgd(latent_embeddings_dict=latent_embeddings_dict)
+            mse_input, mse_target = [], []
             for _, (modal, key) in self.idx_modal_key.items():
-                    # latent_embeddings_dict[modal][key] = tensor + copied_embeddings_dict[modal][key]
-                    mse_sum += mse_loss(input=latent_embeddings_dict[modal][key], 
-                                        target=copied_embeddings_dict[modal][key])
-
-            mse_sum /= len(self.idx_modal_key)
+                    mse_input.append(latent_embeddings_dict[modal][key])
+                    mse_target.append(copied_embeddings_dict[modal][key])
+            mse_input = torch.cat(mse_input, dim=1)
+            mse_target = torch.cat(mse_target, dim=1)
+            assert mse_input.shape == mse_target.shape, f"mse_input.shape={mse_input.shape}, mse_target.shape={mse_target.shape}"
         else:
-            mse_sum = None
+            mse_input, mse_target = None, None
 
         # decode
         logits = self.decoder(latent_embeddings_dict, information_embedding_dict)
         
-        return {"logits" : logits, "mse" : mse_sum}
+        return {"logits" : logits, "mse_input" : mse_input, "mse_target" : mse_target}

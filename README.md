@@ -38,9 +38,7 @@ pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 # script
 python run.py  # run MGD4MD, sumit all folds in one stroke
 python view.py # view average results of all folds
-sbatch --gpus=1 -p gpu run_baselines.sh # submit the job, baselines
-parajobs # check id of the job
-scancel job_id # cancel the job via its id
+cat average_result.json # view results of all folds and their average values
 python clear.py # clear the log file
 
 conda deactivate
@@ -64,10 +62,31 @@ No official code
 
 [Official Code](https://github.com/siwei9898/GNNMA)
 
-### ContrastPool, 2024
-> J. Xu et al., "Contrastive Graph Pooling for Explainable Classification of Brain Networks," in IEEE Transactions on Medical Imaging, vol. 43, no. 9, pp. 3292-3305, Sept. 2024, doi: 10.1109/TMI.2024.3392988.
+### AFMDD, 2025
+> Zhang, Y., Liu, X., Tang, P., & Zhang, Z. (2025). AFMDD: Analyzing Functional Connectivity Feature of Major Depressive Disorder by Graph Neural Network-Based Model. Journal of Computational Biology, 32(2), 156–163. https://doi.org/10.1089/cmb.2024.0505
 
-[Official Code](https://github.com/AngusMonroe/ContrastPool)
+No official code
+
+
+### Chen, 2022
+> F. Chen, L. Wang, Z. Ding, Alteration of whole-brain amplitude of low-frequency fluctuation and degree centrality in patients with mild to moderate depression: A resting-state functional magnetic resonance imaging study, Frontiers in Psychiatry. 13 (2022).
+
+[ROCA] https://github.com/Luoyu-Wang/ROCA
+
+### Wavelet coherence blob analysis + Tree, 2023
+> Cîrstian R, Pilmeyer J, Bernas A, et al. Objective biomarkers of depression: A study of Granger causality and wavelet coherence in resting-state fMRI. J Neuroimaging. 2023; 33: 404–414. https://doi.org/10.1111/jon.13085
+
+No official code
+
+### DCM, 2024
+> S. J.C. Schielen, D. Stepanov, R. Cîrstian, D. Ruijters, A. P. Aldenkamp and S. Zinger, "Dynamic Causal Modelling Applied to Functional MRI of Depression: An Objective Diagnosis," 2024 IEEE International Symposium on Medical Measurements and Applications (MeMeA), Eindhoven, Netherlands, 2024, pp. 1-6, doi: 10.1109/MeMeA60663.2024.10596739. keywords: {Accuracy;Current measurement;Biological system modeling;Stochastic processes;Independent component analysis;Lead;Depression;neurodynamics;fMRI;causality;depression;diagnosis},
+
+No official code
+
+### STANet, 2024
+> Zhang, W.; Zeng, W.; Chen, H.; Liu, J.; Yan, H.; Zhang, K.; Tao, R.; Siok, W.T.; Wang, N. STANet: A Novel Spatio-Temporal Aggregation Network for Depression Classification with Small and Unbalanced FMRI Data. Tomography 2024, 10, 1895-1914. https://doi.org/10.3390/tomography10120138
+
+No official code
 
 ## MGD4MD
 ### Results of different hyperparameter combinations

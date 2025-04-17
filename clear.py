@@ -17,6 +17,11 @@ for out_file in Path(".").rglob("*.out"):
     if out_file.is_file():
         out_file.unlink()
 
+# delete fold_*
+for fold_dir in Path(".").rglob("fold_*"):
+    if fold_dir.is_file():
+        fold_dir.unlink()
+        
 # delete __pycache__
 for pycache_dir in Path(".").rglob("__pycache__"):
     if pycache_dir.is_dir():

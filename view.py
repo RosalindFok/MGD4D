@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from collections import defaultdict 
 
-from config import Train_Config
+from config import Configs
 
 json_files = sorted(Path(".").glob('fold_*.json'))
 result = defaultdict(list)
@@ -13,7 +13,7 @@ for json_file in json_files:
             result[key].append(value)
 
 for key, value in result.items():
-    assert len(value) == Train_Config.n_splits.stop-1, f"Number of values for {key} does not match n_splits"
+    assert len(value) == Configs.n_splits.stop-1, f"Number of values for {key} does not match n_splits"
     result[key] = {
         "list" : value, 
         "mean" : sum(value)/len(value)
