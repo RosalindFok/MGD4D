@@ -27,7 +27,7 @@ class Basic_Config:
     # for ablation
     use_lgd: bool  # True False
     use_modal: str # s-structural f-functional sf-structural+functional
-    info: str
+    info: str # description
 
 # REST_meta_MDD   
 Major_Depression_Config = Basic_Config(
@@ -41,7 +41,7 @@ Major_Depression_Config = Basic_Config(
     info="major"
 )
 
-# Cambridge  ds002748 ds003007
+# Cambridge ds002748 ds003007
 Mild_Depression_Config = Basic_Config(
     batch_size=16,
     epochs=range(20),

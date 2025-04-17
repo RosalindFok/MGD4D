@@ -354,7 +354,6 @@ class LatentGraphDiffusion(nn.Module):
         attended_features, attention_weights = self.multihead_attention(query=Q, key=K, value=V) 
         
         # U-Net
-        # attended_features = self.unet(stacked_features) # ablation of Transformer+multihead_attention
         attended_features = self.unet(attended_features)
 
         # attended_embeddings_dict = {}

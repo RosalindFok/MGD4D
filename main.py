@@ -87,12 +87,8 @@ def train(device : torch.device,
           dataloader : torch.utils.data.DataLoader,
           log : bool = False) -> None:
     model.train()
-    subjid_list = []
-    train_loss_list = []
+    subjid_list, train_loss_list, probability_list, prediction_list, target_list = [],[],[],[],[]
     mem_reserved_list = []
-    probability_list = []
-    prediction_list = []
-    target_list = []
     for batches in tqdm(dataloader, desc="Training", leave=False):
         # move to GPU
         auxi_info = move_to_device(batches.info, device)
@@ -150,11 +146,7 @@ def test(device : torch.device,
          is_test : bool ) -> bool:
     early_stop = False # TODO if needed
     model.eval()
-    subjid_list = []
-    target_list = []
-    probability_list = []
-    prediction_list = []
-    valid_loss_list = []
+    subjid_list, probability_list, prediction_list, valid_loss_list, target_list = [],[],[],[],[]
     with torch.no_grad():
         desc = "Testing" if is_test else "Validating"
         for batches in tqdm(dataloader, desc=desc, leave=False):
@@ -194,8 +186,6 @@ def test(device : torch.device,
 
     # TODO early stop 
     valid_loss = sum(valid_loss_list) / len(valid_loss_list)
-    # if valid_loss and Configs.dataset.use_lgd < 0.4:
-    #     early_stop = True
 
     if log and not is_test: # valid
         print(f"Valid Loss: {valid_loss}")
