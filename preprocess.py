@@ -155,8 +155,7 @@ def preprocess_anat3d_and_func4d_with_atlas(saved_dir_path : Path,
                                         ) -> None:
     # Save participant's information
     info_json_path = saved_dir_path / "info.json"
-    # if not info_json_path.exists():
-    if info_json_path.exists():
+    if not info_json_path.exists():
         if isinstance(participants_info, pd.DataFrame): # ds002748, ds003007
             subject_info = participants_info[participants_info["participant_id"] == saved_dir_path.name]  
             subject_info = subject_info.iloc[0].to_dict()

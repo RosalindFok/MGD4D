@@ -46,51 +46,26 @@ conda env remove -n MGD4MD
 ```
 
 # Raw experimental results
-## baselines
-### ORC-GNN, 2024
-> Li, Y., Dong, Y., Peng, S., Gao, L., & Xin, Y. (2025). ORC-GNN: A novel open set recognition based on graph neural network for multi-class classification of psychiatric disorders. Information Fusion, 117, 102887. https://doi.org/https://doi.org/10.1016/j.inffus.2024.102887 
+## baselines of Major Depression
+| Model | Time | DOI | Code | 
+| --- | --- | --- | --- |  
+|ORC-GNN|2024|10.1016/j.inffus.2024.102887|No official code|
+|DGCN|2024|10.1016/j.jad.2024.11.035|No official code|
+|GNNMA|2025|10.1016/j.bspc.2024.107252|[Official Code](https://github.com/siwei9898/GNNMA)|
+|AFMDD|2025|10.1089/cmb.2024.0505|No official code|
 
-No official code
-
-### DGCN, 2024
-> Zhou, N., Yuan, Z., Zhou, H., Lyu, D., Wang, F., Wang, M., Lu, Z., Huang, Q., Chen, Y., Huang, H., Cao, T., Wu, C., Yang, W., & Hong, W. (2025). Using dynamic graph convolutional network to identify individuals with major depression disorder. Journal of Affective Disorders, 371, 188–195. https://doi.org/https://doi.org/10.1016/j.jad.2024.11.035
-
-No official code
-
-### GNNMA, 2025
-> Si, W., Wang, G., Liu, L., Zhang, L., & Qiao, L. (2025). Graph neural network with modular attention for identifying brain disorders. Biomedical Signal Processing and Control, 102, 107252. https://doi.org/https://doi.org/10.1016/j.bspc.2024.107252
-
-[Official Code](https://github.com/siwei9898/GNNMA)
-
-### AFMDD, 2025
-> Zhang, Y., Liu, X., Tang, P., & Zhang, Z. (2025). AFMDD: Analyzing Functional Connectivity Feature of Major Depressive Disorder by Graph Neural Network-Based Model. Journal of Computational Biology, 32(2), 156–163. https://doi.org/10.1089/cmb.2024.0505
-
-No official code
-
-
-### Chen, 2022
-> F. Chen, L. Wang, Z. Ding, Alteration of whole-brain amplitude of low-frequency fluctuation and degree centrality in patients with mild to moderate depression: A resting-state functional magnetic resonance imaging study, Frontiers in Psychiatry. 13 (2022).
-
-[ROCA] https://github.com/Luoyu-Wang/ROCA
-
-### Wavelet coherence blob analysis + Tree, 2023
-> Cîrstian R, Pilmeyer J, Bernas A, et al. Objective biomarkers of depression: A study of Granger causality and wavelet coherence in resting-state fMRI. J Neuroimaging. 2023; 33: 404–414. https://doi.org/10.1111/jon.13085
-
-No official code
-
-### DCM, 2024
-> S. J.C. Schielen, D. Stepanov, R. Cîrstian, D. Ruijters, A. P. Aldenkamp and S. Zinger, "Dynamic Causal Modelling Applied to Functional MRI of Depression: An Objective Diagnosis," 2024 IEEE International Symposium on Medical Measurements and Applications (MeMeA), Eindhoven, Netherlands, 2024, pp. 1-6, doi: 10.1109/MeMeA60663.2024.10596739. keywords: {Accuracy;Current measurement;Biological system modeling;Stochastic processes;Independent component analysis;Lead;Depression;neurodynamics;fMRI;causality;depression;diagnosis},
-
-No official code
-
-### STANet, 2024
-> Zhang, W.; Zeng, W.; Chen, H.; Liu, J.; Yan, H.; Zhang, K.; Tao, R.; Siok, W.T.; Wang, N. STANet: A Novel Spatio-Temporal Aggregation Network for Depression Classification with Small and Unbalanced FMRI Data. Tomography 2024, 10, 1895-1914. https://doi.org/10.3390/tomography10120138
-
-No official code
+## baselines of Mild Depression
+| Model | Time | DOI | Code | 
+| --- | --- | --- | --- |  
+|Chen|2022|10.3389/fpsyt.2022.1061359|[ROCA](https://github.com/Luoyu-Wang/ROCA)|
+|Cirstian|2023|10.1111/jon.13085|No official code|
+|DCM|2024|10.1109/MeMeA60663.2024.10596739|No official code|
+|STANet|2024|10.3390/tomography10120138|No official code|
 
 ## MGD4MD
-### Results of different hyperparameter combinations
-Epoch, batch size, learning rate, optimizer, weight decay, random seed 
-
-### Ablation Study
-auxiliary information, diffusion model
+[MajorDepression](./OriginalExperimentalData/MajorDepression/MGD4MD.json)
+[MajorDepression-without-Diffusion](./OriginalExperimentalData/MajorDepression/MGD4MD-D.json)
+[MildDepression](./OriginalExperimentalData/MildDepression/MGD4MD.json)
+[MildDepression-without-Diffusion](./OriginalExperimentalData/MildDepression/MGD4MD-D.json)
+[MildDepression-without-Structural](./OriginalExperimentalData/MildDepression/MGD4MD-S.json)
+[MildDepression-without-Functional](./OriginalExperimentalData/MildDepression/MGD4MD-F.json)

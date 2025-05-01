@@ -205,11 +205,14 @@ def test(device : torch.device,
     return early_stop
 
 class Combined_Loss(nn.modules.loss._Loss):
-    def __init__(self, cet_weight : torch.Tensor, use_mse : bool) -> None:
+    def __init__(self, cet_weight : torch.Tensor, use_mse : bool, 
+                 w_1 : float = 1.0, w_2 : float = 1.0) -> None:
         super().__init__()
         self.cet_loss = nn.CrossEntropyLoss(weight=cet_weight)
         self.mse_loss = nn.MSELoss()
         self.use_mse = use_mse
+        self.w_1 = w_1
+        self.w_2 = w_2
     
     def forward(self, cet_input : torch.Tensor, cet_target : torch.Tensor, 
                       mse_input : torch.Tensor, mse_target : torch.Tensor) -> torch.Tensor:
@@ -220,7 +223,7 @@ class Combined_Loss(nn.modules.loss._Loss):
             mse_loss = self.mse_loss(input=mse_input, target=mse_target)
         else:
             mse_loss = torch.tensor(0.0, device=cet_input.device)
-        return cet_loss + mse_loss
+        return self.w_1*cet_loss + self.w_2*mse_loss
         
 def main() -> None:
     parser = argparse.ArgumentParser()

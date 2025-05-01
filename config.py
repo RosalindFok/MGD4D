@@ -65,7 +65,7 @@ class Configs:
     # Major Depression: GPU memory usage: 36.82GB / 39.38GB
     # dataset: Basic_Config = Major_Depression_Config
 
-    # Mild Depression:
+    # Mild Depression: 
     dataset: Basic_Config = Mild_Depression_Config
 
 # Brain network
