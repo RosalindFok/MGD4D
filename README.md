@@ -63,9 +63,9 @@ conda env remove -n MGD4MD
 |STANet|2024|10.3390/tomography10120138|No official code|
 
 ## MGD4MD
-[MajorDepression](./OriginalExperimentalData/MajorDepression/MGD4MD.json)
-[MajorDepression-without-Diffusion](./OriginalExperimentalData/MajorDepression/MGD4MD-D.json)
-[MildDepression](./OriginalExperimentalData/MildDepression/MGD4MD.json)
-[MildDepression-without-Diffusion](./OriginalExperimentalData/MildDepression/MGD4MD-D.json)
-[MildDepression-without-Structural](./OriginalExperimentalData/MildDepression/MGD4MD-S.json)
+[MajorDepression](./OriginalExperimentalData/MajorDepression/MGD4MD.json)<br>
+[MajorDepression-without-Diffusion](./OriginalExperimentalData/MajorDepression/MGD4MD-D.json)<br>
+[MildDepression](./OriginalExperimentalData/MildDepression/MGD4MD.json)<br>
+[MildDepression-without-Diffusion](./OriginalExperimentalData/MildDepression/MGD4MD-D.json)<br>
+[MildDepression-without-Structural](./OriginalExperimentalData/MildDepression/MGD4MD-S.json)<br>
 [MildDepression-without-Functional](./OriginalExperimentalData/MildDepression/MGD4MD-F.json)
