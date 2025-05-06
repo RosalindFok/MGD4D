@@ -15,16 +15,6 @@ class Gender:
     FEMALE : int = 2
     UNSPECIFIED : int = 0
 
-# Brain network
-@dataclass(frozen=True)
-class Yeo_Network: # for Brainnetome Atlas
-    # in file: subregion_func_network_Yeo_updated.csv
-    #  7: Visual, Somatomotor, Dorsal Attention, Ventral Attention, Limbic, Frontoparietal, Default
-    # 17: Visual peripheral/central, Somato-motor A/B, Dorsal attention A/B, Ventral attention, Salience, Limbic-1/2, Control C/A/B, Default D (Auditory)/C/A/B
-    granularity: str = "coarse" # coarse=7 fine=17
-    network: str = "Whole"  # from the above names or Whole
-    select: bool = True # True=the subregions within the network; False=the complement in the whole brain.
-
 # Ablation settings
 set_use_modal = "sf"
 set_use_lgd = True
@@ -64,7 +54,7 @@ Mild_Depression_Config = Basic_Config(
     use_batchnorm=False,
     use_lgd=set_use_lgd,
     use_modal=set_use_modal.lower(),
-    info="mild",
+    info="mild"
 )
 
 # Hyperparameters
