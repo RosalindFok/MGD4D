@@ -1,5 +1,5 @@
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Slurm: for Beijing Super Cloud Computing Center
 @dataclass(frozen=True)
@@ -30,11 +30,15 @@ class Brainnetome_Path:
     BN_Atlas_246_1mm_nii_path: Path = dir_path / "BN_Atlas_246_1mm.nii.gz"
     BN_Atlas_246_2mm_nii_path: Path = dir_path / "BN_Atlas_246_2mm.nii.gz"
     BN_Atlas_246_3mm_nii_path: Path = dir_path / "BN_Atlas_246_3mm.nii.gz"
+    BNA_subregions_xlsx_path: Path = dir_path / "BNA_subregions.xlsx"
     BNA_adjacent_matrix_path : Path = dir_path / "BNA_matrix_binary_246x246.csv"
+    subregion_func_network_Yeo_updated_csv_path: Path = dir_path / "subregion_func_network_Yeo_updated.csv"
     assert BN_Atlas_246_1mm_nii_path.exists(), f"{BN_Atlas_246_1mm_nii_path} does not exist"
     assert BN_Atlas_246_2mm_nii_path.exists(), f"{BN_Atlas_246_2mm_nii_path} does not exist"
     assert BN_Atlas_246_3mm_nii_path.exists(), f"{BN_Atlas_246_3mm_nii_path} does not exist"
+    assert BNA_subregions_xlsx_path.exists(), f"{BNA_subregions_xlsx_path} does not exist"
     assert BNA_adjacent_matrix_path.exists(), f"{BNA_adjacent_matrix_path} does not exist"
+    assert subregion_func_network_Yeo_updated_csv_path.exists(), f"{subregion_func_network_Yeo_updated_csv_path} does not exist"
 
 @dataclass(frozen=True)
 class Atlas_Path:

@@ -3,6 +3,7 @@ Multi-modal Graph Diffusion for identifying neuroimaging biomarkers of mental di
 
 ## 1. Preprocess
 Platform: Windows11, Python 3.11.4
+Download Brainnetome Atlas: [url](https://atlas.brainnetome.org/download.html)
 
 ``` shell
 # dependencies
@@ -33,7 +34,7 @@ pip install nilearn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully 
 pip install tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed tqdm-4.67.1
 pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed contourpy-1.3.1 cycler-0.12.1 fonttools-4.55.8 kiwisolver-1.4.8 matplotlib-3.10.0 pyparsing-3.2.1
 pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed seaborn-0.13.2
-
+pip install openpyxl -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed et-xmlfile-2.0.0 openpyxl-3.1.5
 
 # script
 python run.py  # run MGD4MD, sumit all folds in one stroke
@@ -44,6 +45,11 @@ python clear.py # clear the log file
 conda deactivate
 conda env remove -n MGD4MD
 ```
+
+
+## 3. XAI
+
+
 
 # Raw experimental results
 ## baselines of Major Depression

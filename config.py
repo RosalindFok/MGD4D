@@ -15,6 +15,20 @@ class Gender:
     FEMALE : int = 2
     UNSPECIFIED : int = 0
 
+# Brain network
+@dataclass(frozen=True)
+class Yeo_Network: # for Brainnetome Atlas
+    # in file: subregion_func_network_Yeo_updated.csv
+    #  7: Visual, Somatomotor, Dorsal Attention, Ventral Attention, Limbic, Frontoparietal, Default
+    # 17: Visual peripheral/central, Somato-motor A/B, Dorsal attention A/B, Ventral attention, Salience, Limbic-1/2, Control C/A/B, Default D (Auditory)/C/A/B
+    granularity: str = "coarse" # coarse=7 fine=17
+    network: str = "Whole"  # from the above names or Whole
+    select: bool = True # True=the subregions within the network; False=the complement in the whole brain.
+
+# Ablation settings
+set_use_modal = "sf"
+set_use_lgd = True
+
 @dataclass(frozen=True)
 class Basic_Config:
     # for Dataloader
@@ -36,8 +50,8 @@ Major_Depression_Config = Basic_Config(
     lr=5e-5,
     latent_embedding_dim=768,
     use_batchnorm=True,
-    use_lgd=True, 
-    use_modal="sf".lower(),
+    use_lgd=set_use_lgd, 
+    use_modal=set_use_modal.lower(),
     info="major"
 )
 
@@ -48,9 +62,9 @@ Mild_Depression_Config = Basic_Config(
     lr=5e-5,
     latent_embedding_dim=1024,
     use_batchnorm=False,
-    use_lgd=True,
-    use_modal="sf".lower(),
-    info="mild"
+    use_lgd=set_use_lgd,
+    use_modal=set_use_modal.lower(),
+    info="mild",
 )
 
 # Hyperparameters
@@ -65,13 +79,5 @@ class Configs:
     # Major Depression: GPU memory usage: 36.82GB / 39.38GB
     # dataset: Basic_Config = Major_Depression_Config
 
-    # Mild Depression: 
+    # Mild Depression: GPU memory usage: 37.17GB / 39.38GB
     dataset: Basic_Config = Mild_Depression_Config
-
-# Brain network
-@dataclass(frozen=True)
-class Brain_Network:
-    whole: str = "whole"
-    DMN: str = "DMN"
-    CEN: str = "CEN"
-    SN:  str = "SN"

@@ -372,9 +372,9 @@ class LatentGraphDiffusion(nn.Module):
         for _, (modal, key) in self.idx_modal_key.items():
             weighted_embeddings_dict[modal][key] = attended_embeddings_dict[modal][key] * scores_dict[modal][key]
         
-        return weighted_embeddings_dict # TODO scores_dict and attention_weights
+        return weighted_embeddings_dict
 
-    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> tuple[dict[str, dict[str, torch.Tensor]], torch.Tensor, torch.Tensor]:
+    def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
         tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))
         # t: time steps in the diffusion process
         # randomly generate a time step t, i.e., directly sample the t-th step of T steps; there is no need to use 'for t in range(T)' to accumulate.

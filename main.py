@@ -1,4 +1,3 @@
-import gc
 import csv
 import json
 import torch
@@ -15,7 +14,6 @@ from plot import plot_confusion_matrix
 from models import device, MGD4MD, get_GPU_memory_usage
 from dataset import get_major_dataloader_via_fold, get_mild_dataloader_via_fold
 
-np.random.seed(seed)
 torch.manual_seed(seed)
 if torch.cuda.is_available():  
     torch.cuda.manual_seed(seed) 
@@ -80,7 +78,6 @@ def write_csv(filename : Path, head : list[Any], data : list[list[Any]]) -> None
             writer.writerow([data[j][i] for j in range(len(data))])
         
 def train(device : torch.device,
-          epoch : int,
           model : nn.Module, 
           loss_fn : nn.modules.loss._Loss, 
           optimizer : torch.optim.Optimizer, 
@@ -269,12 +266,15 @@ def main() -> None:
 
         print(f"\nFold {fold}/{Configs.n_splits.stop-1}, Epoch {epoch + 1}/{Configs.dataset.epochs.stop}")
         # Train
-        train(device=device, epoch=epoch, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader, log=True)
+        train(device=device, model=model, loss_fn=loss_fn, optimizer=optimizer, dataloader=train_dataloader, log=True)
         # Valid
         early_stop = test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=False)
         if early_stop:
             break
-    
+
+    # Save the trained model
+    torch.save(model.state_dict(), f"{fold}.pth")
+
     # Test
     print("Test")
     test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=True)
