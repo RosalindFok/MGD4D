@@ -16,7 +16,7 @@ class Gender:
     UNSPECIFIED : int = 0
 
 # Ablation settings
-set_use_modal = "sf"
+set_use_modal = "f" # sf s f
 set_use_lgd = True
 
 @dataclass(frozen=True)

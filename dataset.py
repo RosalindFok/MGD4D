@@ -213,12 +213,12 @@ class KFold_Mild_Depression:
 
         return kfold_dir_paths
 
-    def get_dataloader_via_fold(self, fold : int) -> Dataloader_Returns:
+    def get_dataloader_via_fold(self, fold : int, num_workers : int = Configs.num_workers) -> Dataloader_Returns:
         assert fold in self.kfold_dir_paths.keys(), f"Unknown fold: {fold}"
         train_dataset = Dataset_Mild_Depression(path_list=self.kfold_dir_paths[fold]["train"])
         test_dataset  = Dataset_Mild_Depression(path_list=self.kfold_dir_paths[fold]["test"])
-        train_dataloader = DataLoader(train_dataset, batch_size=Configs.dataset.batch_size, num_workers=Configs.num_workers, shuffle=Configs.shuffle, pin_memory=True, persistent_workers=True)
-        test_dataloader  = DataLoader(test_dataset,  batch_size=Configs.dataset.batch_size, num_workers=Configs.num_workers, shuffle=Configs.shuffle, pin_memory=True, persistent_workers=True)
+        train_dataloader = DataLoader(train_dataset, batch_size=Configs.dataset.batch_size, num_workers=num_workers, shuffle=Configs.shuffle, pin_memory=True, persistent_workers=True)
+        test_dataloader  = DataLoader(test_dataset,  batch_size=Configs.dataset.batch_size, num_workers=num_workers, shuffle=Configs.shuffle, pin_memory=True, persistent_workers=True)
         return Dataloader_Returns(train=train_dataloader, test=test_dataloader, info=self.max_val, weight=to_tensor([0.5,0.5]))
 
 get_mild_dataloader_via_fold = KFold_Mild_Depression().get_dataloader_via_fold

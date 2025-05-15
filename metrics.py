@@ -23,6 +23,11 @@ class Metrics:
         return recall_score(true, pred, zero_division=0)
 
     @staticmethod
+    def SPE(pred: np.ndarray, true: np.ndarray) -> float:
+        assert pred.shape == true.shape, f"pred.shape {pred.shape} != true.shape {true.shape}"
+        return recall_score(true, pred, pos_label=0, zero_division=0)
+
+    @staticmethod
     def F1S(pred : np.ndarray, true : np.ndarray) -> float:
         assert pred.shape == true.shape, f"pred.shape {pred.shape} != true.shape {true.shape}"
         return f1_score(true, pred, zero_division=0)

@@ -443,7 +443,7 @@ class Decoder(nn.Module):
 
         return output
     
-class MGD4MD(nn.Module):
+class MGD4D(nn.Module):
     def __init__(self, info_dict : dict[str, int], shapes_dict : dict[str, dict[str, Any]], 
                  embedding_dim : int, use_batchnorm : bool, use_lgd : bool, use_modal : str) -> None:
         super().__init__()
