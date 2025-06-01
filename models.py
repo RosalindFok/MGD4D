@@ -372,7 +372,7 @@ class LatentGraphDiffusion(nn.Module):
         for _, (modal, key) in self.idx_modal_key.items():
             weighted_embeddings_dict[modal][key] = attended_embeddings_dict[modal][key] * scores_dict[modal][key]
         
-        return weighted_embeddings_dict
+        return weighted_embeddings_dict 
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
         tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))

@@ -64,7 +64,7 @@ class ResNet3D(nn.Module):
         return nn.Sequential(*layers)  
     
     def forward(self, x : torch.Tensor) -> torch.Tensor:  
-        # Input shape: (batch_size, 1, D, H, W)  
+        # Input shape: (batch_size, in_channels, D, H, W)  
         x = self.conv1(x)  
         x = self.maxpool(x)  
         
