@@ -55,7 +55,8 @@ class Run_Files_Path:
     run_files_ds003007_dir_path.mkdir(parents=True, exist_ok=True)
     run_files_rest_meta_mdd_dir_path.mkdir(parents=True, exist_ok=True)
     run_files_cambridge_dir_path.mkdir(parents=True, exist_ok=True)
-
+    embedding_dir_path = run_files_dir_path / "embeddings"
+    embedding_dir_path.mkdir(parents=True, exist_ok=True)
 
 @dataclass(frozen=True)
 class Paths:

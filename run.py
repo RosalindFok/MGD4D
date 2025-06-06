@@ -3,8 +3,8 @@ import json
 import argparse
 import subprocess 
 
-from path import Slurm
 from config import Configs
+from path import Slurm, Paths
 
 subprocess.run(["chmod", "777", "*.sh"], capture_output=True, text=True)  
 
@@ -16,6 +16,8 @@ task = args.task.lower()
 slurm_id_dict = {}
 
 if task == "t":
+    for file_path in Paths.Run_Files.embedding_dir_path.iterdir():
+        file_path.unlink()
     for fold in Configs.n_splits:
         result = subprocess.run(["sbatch", "--gpus=1", 
                                 f"--output={fold}.out", 

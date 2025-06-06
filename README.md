@@ -20,7 +20,8 @@ python preprocess.py
 
 
 ## 2. Train
-Platform: Beijing Super Cloud Computing Center - N32EA14P: `NVIDIA A100-PCIE-40GB * 8`
+Platform: Beijing Super Cloud Computing Center - N32EA14P: `NVIDIA A100-PCIE-40GB * 8` <br>
+How to change the datasets: [the 'dataset' in 'class Configs' of 'config.py'](./config.py)
 
 ``` shell
 # conda enviorment
@@ -36,6 +37,7 @@ pip install matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successful
 pip install seaborn -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed seaborn-0.13.2
 pip install openpyxl -i https://pypi.tuna.tsinghua.edu.cn/simple/ # Successfully installed et-xmlfile-2.0.0 openpyxl-3.1.5
 
+
 # script
 python run.py --task T # run MGD4D, sumit all folds in one stroke
 python view.py # view average results of all folds
@@ -43,7 +45,7 @@ cat average_result.json # view results of all folds and their average values
 python clear.py # clear the log file
 
 # XAI
-python run.py --task X # run XAI
+python run.py --task X # run XAI.py
 
 
 conda deactivate
@@ -76,6 +78,9 @@ conda env remove -n MGD4D
 [MajorDepression](./OriginalExperimentalData/MajorDepression/MGD4D.json)<br>
 [MajorDepression-without-Diffusion](./OriginalExperimentalData/MajorDepression/MGD4D-D.json)<br>
 [MildDepression](./OriginalExperimentalData/MildDepression/MGD4D.json)<br>
-[MildDepression-without-Diffusion](./OriginalExperimentalData/MildDepression/MGD4D-D.json)<br>
 [MildDepression-without-Structural](./OriginalExperimentalData/MildDepression/MGD4D-S.json)<br>
-[MildDepression-without-Functional](./OriginalExperimentalData/MildDepression/MGD4D-F.json)
+[MildDepression-without-Functional](./OriginalExperimentalData/MildDepression/MGD4D-F.json)<br>
+[MildDepression-without-Diffusion](./OriginalExperimentalData/MildDepression/MGD4D-D.json)<br>
+[MildDepression-without-Transformer](./OriginalExperimentalData/MildDepression/MGD4D-T.json)<br>
+[MildDepression-without-UNet](./OriginalExperimentalData/MildDepression/MGD4D-U.json)<br>
+[MildDepression-without-Attention](./OriginalExperimentalData/MildDepression/MGD4D-A.json)<br>

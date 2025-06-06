@@ -6,6 +6,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from pathlib import Path
 
+from path import Paths
 from metrics import Metrics
 from config import Configs, seed
 from plot import plot_confusion_matrix
@@ -81,10 +82,13 @@ def test(device : torch.device,
          dataloader : torch.utils.data.DataLoader,
          loss_fn : nn.modules.loss._Loss, 
          log : bool,
-         is_test : bool ) -> bool:
+         is_test : bool,
+         use_lgd : bool = False) -> bool:
     early_stop = False # TODO if needed
     model.eval()
     subjid_list, probability_list, prediction_list, valid_loss_list, target_list = [],[],[],[],[]
+    if use_lgd:
+        embedding_bf_lgd_list, embedding_af_lgd_list = [],[] # before, after
     with torch.no_grad():
         desc = "Testing" if is_test else "Validating"
         for batches in tqdm(dataloader, desc=desc, leave=False):
@@ -108,6 +112,9 @@ def test(device : torch.device,
             probability_list.extend(probability[:, 1].cpu().numpy()) 
             prediction_list.extend(probability.argmax(dim=-1).cpu().numpy())
             subjid_list.extend(batches.id)
+            if use_lgd:
+                embedding_bf_lgd_list.extend(output["mse_target"].cpu().numpy())
+                embedding_af_lgd_list.extend(output["mse_input"].cpu().numpy())
     
     target = np.array(target_list).astype(int).flatten() 
     probability = np.array(probability_list).astype(float).flatten() 
@@ -139,6 +146,13 @@ def test(device : torch.device,
             json.dump(metrics, f, indent=4, ensure_ascii=False)
         write_csv(filename=Path(f"fold_{fold}_test_results.csv"),
                   head=["subj", "true", "prob", "pred"], data=[subjid_list, target, probability, prediction])
+        if use_lgd:
+            assert len(embedding_bf_lgd_list) == len(embedding_af_lgd_list) == len(subjid_list) == len(target), f"{len(embedding_bf_lgd_list)}!= {len(embedding_af_lgd_list)}!= {len(subjid_list)}!= {len(target)}"
+            embedding_dir_path = Paths.Run_Files.embedding_dir_path
+            for i in tqdm(range(len(subjid_list)), desc="Saving embeddings", leave=True):
+                npz_file_path = embedding_dir_path / f"{subjid_list[i]}.npz"
+                npz_dict = {"before" : embedding_bf_lgd_list[i], "after" : embedding_af_lgd_list[i], "target" : target[i]}
+                np.savez_compressed(npz_file_path, **npz_dict)
 
     return early_stop
 
@@ -218,7 +232,7 @@ def main() -> None:
 
     # Test
     print("Test")
-    test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=True)
+    test(device=device, epoch=epoch, fold=fold, model=model, loss_fn=loss_fn, dataloader=test_dataloader, log=True, is_test=True, use_lgd=Configs.dataset.use_lgd)
 
 if __name__ == "__main__":
     main()

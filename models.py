@@ -193,7 +193,7 @@ class LatentGraphDiffusion(nn.Module):
         # multi-head attention
         self.multihead_attention = nn.MultiheadAttention(embed_dim=embedding_dim, num_heads=16, batch_first=True)
         
-        # score
+        # # score
         self.half_dim = embedding_dim // 2
         self.contribution_mlps = nn.ModuleDict({  
             f"{modal}-{key}" : nn.Sequential(
@@ -372,7 +372,7 @@ class LatentGraphDiffusion(nn.Module):
         for _, (modal, key) in self.idx_modal_key.items():
             weighted_embeddings_dict[modal][key] = attended_embeddings_dict[modal][key] * scores_dict[modal][key]
         
-        return weighted_embeddings_dict 
+        return weighted_embeddings_dict # ablation of -A: attended_embeddings_dict
 
     def forward(self, latent_embeddings_dict : dict[str, dict[str, torch.Tensor]]) -> dict[str, dict[str, torch.Tensor]]:
         tensor = next(iter(next(iter(latent_embeddings_dict.values())).values()))
