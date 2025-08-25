@@ -29,8 +29,5 @@ if task == "t":
         slurm_id_dict[fold] = ids[0]
         with open(Slurm.slurm_id_path, "w", encoding="utf-8") as f:
             json.dump(slurm_id_dict, f, indent=4)
-elif task == "x":
-    result = subprocess.run(["sbatch", "--gpus=1", f"--output=XAI.out", "-p", "gpu", "XAI.sh"], capture_output=True, text=True)
-    print(result.stdout)
 else:
     raise ValueError(f"task: {task} is not supported, please use T/t or X/x")
