@@ -1,5 +1,7 @@
 # MGD4D
-Multi-modal Graph Diffusion for Depression Detection
+Multi-modal Graph Diffusion for Depression Detection, PRCV 2025
+
+![Pipeline](./figs/pipeline.png)
 
 ## 1. Preprocess
 Platform: Windows11, Python 3.11.4 <br>
@@ -21,7 +23,7 @@ python preprocess.py
 
 ## 2. Train
 Platform: Beijing Super Cloud Computing Center - N32EA14P: `NVIDIA A100-PCIE-40GB * 8` <br>
-How to change the datasets: [the 'dataset' in 'class Configs' of 'config.py'](./config.py)
+How to change the datasets: the 'dataset' in 'class Configs' of [config.py](./config.py)
 
 ``` shell
 # conda enviorment
@@ -43,10 +45,7 @@ python view.py # view average results of all folds
 cat average_result.json # view results of all folds and their average values
 python clear.py # clear the log file
 
-# XAI
-python run.py --task X # run XAI.py
-
-
+# delete
 conda deactivate
 conda env remove -n MGD4D
 ```
