@@ -1,5 +1,5 @@
 # MGD4D
-Title: Multi-modal Graph Diffusion for Depression Detection <br>
+Title: [Multi-modal Graph Diffusion for Depression Detection](https://doi.org/10.1007/978-981-95-5634-2_20) <br>
 Accepted Conference: Pattern Recognition and Computer Vision, 2025 <br>
 
 ![Pipeline](./figs/pipeline.png)
